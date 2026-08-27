@@ -1,0 +1,34 @@
+[project]
+name = "razorsync-v2-backend"
+version = "2.0.0"
+description = "RazorSync v2 — Razorpay-coordinated engine with statistical rigor"
+requires-python = ">=3.12"
+authors = [{ name = "RazorSync" }]
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "sqlalchemy>=2.0.27",
+    "python-multipart>=0.0.9",
+    "razorpay>=1.4.0",
+    "python-dateutil>=2.8.2",
+    "httpx>=0.27.0",
+    "scipy>=1.12.0",
+    "numpy>=1.26.0",
+    "redis>=5.0.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
