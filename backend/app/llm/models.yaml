@@ -1,0 +1,23 @@
+# Provider registry - add model = 3 lines, switch via .env LLM_PROVIDER/MODEL
+providers:
+  groq:
+    endpoint: https://api.groq.com/openai/v1/chat/completions
+    api_key_env: LLM_API_KEY
+    models: [qwen/qwen3.8-27b, openai/gpt-oss-20b, openai/gpt-oss-120b]
+  together:
+    endpoint: https://api.together.xyz/v1/chat/completions
+    api_key_env: LLM_API_KEY
+    models: [meta-llama/Llama-3.2-3B-Instruct-Turbo, Qwen/Qwen2.5-7B-Instruct-Turbo]
+  openrouter:
+    endpoint: https://openrouter.ai/api/v1/chat/completions
+    api_key_env: LLM_API_KEY
+    models: [google/gemini-flash-1.5-8b:free, meta-llama/llama-3.2-3b-instruct:free]
+  huggingface:
+    endpoint: https://api-inference.huggingface.co/v1/chat/completions
+    api_key_env: LLM_API_KEY
+    models: [Qwen/Qwen2.5-7B-Instruct, meta-llama/Llama-3.2-3B-Instruct]
+  ollama:
+    endpoint: http://localhost:11434/v1/chat/completions
+    api_key_env: ""
+    models: [llama3.2, qwen2.5, mistral]
+default: groq
