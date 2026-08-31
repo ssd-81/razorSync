@@ -1,0 +1,47 @@
+# Real agents config - single source for AGENT_DEFS + WEBHOOK_AGENT_MAP + weights
+# Edit this file to add new agent type -> auto wired everywhere (no engine change)
+agents:
+  autopay_retry:
+    trigger: payment.failed
+    entity: subscription/autopay
+    channels: [sms, whatsapp, email]
+    delays_h: [0, 24, 72]
+    discounts: [0, 0, 0]
+    weight: 1.2
+    description: "Razorpay Subscriptions / Autopay failed — retry with payment link"
+    system_prompt: "You are autopay_retry for merchant {merchant_id}. Goal maximize est_revenue but MUST call check_coordination before send. If BLOCKED propose alternative channel/delay or suppress. Never bypass. Output JSON {channel, discount, reasoning, confidence}."
+  payment_link_recovery:
+    trigger: payment_link.abandoned
+    entity: payment_link
+    channels: [whatsapp, email, sms]
+    delays_h: [1, 6, 24]
+    discounts: [0, 0.05, 0.10]
+    weight: 1.0
+    description: "Payment Links abandoned — recover with progressive discount"
+    system_prompt: "You are payment_link_recovery for merchant {merchant_id}. Recover abandoned links. Prefer whatsapp first. Use discount only if needed. Output JSON."
+  invoice_dunning:
+    trigger: invoice.overdue
+    entity: invoice
+    channels: [email, whatsapp]
+    delays_h: [0, 48]
+    discounts: [0, 0]
+    weight: 1.15
+    description: "Invoices overdue — dunning sequence"
+    system_prompt: "You are invoice_dunning for merchant {merchant_id}. Dunning for overdue invoices. No discount. Output JSON."
+  x_payout_growth:
+    trigger: payment.captured
+    entity: payout
+    channels: [in_app, email]
+    delays_h: [2]
+    discounts: [0]
+    weight: 0.8
+    description: "RazorpayX — post-payout upsell to drive growth"
+    system_prompt: "You are x_payout_growth for merchant {merchant_id}. Post-success upsell via payout offer. Output JSON."
+
+webhook_map:
+  payment.failed: [autopay_retry, invoice_dunning]
+  payment.captured: [x_payout_growth]
+  order.paid: [x_payout_growth]
+  payment_link.abandoned: [payment_link_recovery]
+  invoice.overdue: [invoice_dunning]
+  refund.created: [autopay_retry]
