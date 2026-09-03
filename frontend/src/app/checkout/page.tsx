@@ -17,7 +17,7 @@ export default function CheckoutPage() {
   const [orderResult, setOrderResult] = useState<any>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [webhookStatus, setWebhookStatus] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
     setMounted(true);
@@ -34,27 +34,21 @@ export default function CheckoutPage() {
   }, []);
 
   const pollDecision = useCallback(async (customerId: string) => {
-    setWebhookStatus("Waiting for Razorpay webhook…");
+    setStatusMessage("Confirming payment…");
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       try {
         const decisions = await apiFetch("/api/v1/decisions/recent?limit=5") as any[];
         if (Array.isArray(decisions)) {
           const match = decisions.find((d: any) => d.customer_id === customerId && d.source === "live");
-          if (match) { setDecision(match); setStep("done"); setWebhookStatus("Webhook received — coordination decision made"); return; }
+          if (match) { setDecision(match); setStep("done"); setStatusMessage(""); return; }
         }
-        // Also check inbox for policy-blocked (no decision) case — show it as blocked
-        try {
-          const inbox: any = await apiFetch("/api/v1/webhook/inbox?limit=5");
-          const recent = Array.isArray(inbox) ? inbox.find((x: any) => x.customer_id === customerId && x.status === "completed") : null;
-          if (recent && decisions.length === 0) setWebhookStatus(`Webhook ${recent.event} processed (policy check) — waiting for decision… (${i + 1}/30)`);
-        } catch {}
       } catch {}
-      setWebhookStatus(`Waiting for webhook… (${i + 1}/30)`);
+      setStatusMessage(`Confirming payment… (${i + 1}/30)`);
     }
-    setError("Webhook not received within 60s — Razorpay may not have fired (check Dashboard → Settings → Webhooks → Logs), or tunnel URL rotated. Fix: re-check https://<your-tunnel>/health via tunnel, re-register webhook URL, and try again. Recent payment was still captured — check Audit trail for last decision or retry checkout.");
-    setWebhookStatus("Timed out — no live decision for this customer yet.");
-    setStep("form"); // allow retry — was stuck on waiting with no error before fix
+    setError("Confirmation timed out — payment may still have succeeded. Check Ops for the latest decision or try again.");
+    setStatusMessage("");
+    setStep("form");
   }, []);
 
   const handlePayment = async () => {
@@ -77,7 +71,7 @@ export default function CheckoutPage() {
         },
         prefill: { contact: customers.find((c) => c.id === selectedCustomer)?.phone || "", email: customers.find((c) => c.id === selectedCustomer)?.email || "" },
         theme: { color: "#0B5CFF" },
-        modal: { ondismiss: function () { setStep("form"); setLoading(false); setError("Payment cancelled by user."); } },
+        modal: { ondismiss: function () { setStep("form"); setLoading(false); setError("Payment cancelled."); } },
         // Request all methods — popup only shows what’s enabled in Dashboard. If only Card appears, enable UPI/Netbanking there.
         config: {
           display: {
@@ -95,12 +89,7 @@ export default function CheckoutPage() {
       rzp.on("payment.failed", function (response: any) {
         setStep("form"); setLoading(false);
         const desc: string = response.error?.description || "Unknown error";
-        const isIntl = desc.toLowerCase().includes("international");
-        if (isIntl) {
-          setError(`Card flagged as international. Fix: Razorpay Dashboard → Settings → Payment Configuration → Enable International Cards (test mode). Or use UPI "success@razorpay" — it always succeeds. Details: ${desc}`);
-        } else {
-          setError(`Payment failed: ${desc}`);
-        }
+        setError(`Payment failed: ${desc}`);
       });
       rzp.open();
     } catch (e: any) { setStep("form"); setError(String(e)); } finally { setLoading(false); }
@@ -119,15 +108,15 @@ export default function CheckoutPage() {
 
   const razorpayLoaded = typeof window !== "undefined" && !!window.Razorpay;
   const steps: Array<{ key: typeof step; label: string }> = [
-    { key: "form", label: "Pay" }, { key: "paying", label: "Checkout" }, { key: "waiting", label: "Webhook" }, { key: "done", label: "Done" }
+    { key: "form", label: "Pay" }, { key: "paying", label: "Checkout" }, { key: "waiting", label: "Confirming" }, { key: "done", label: "Done" }
   ];
   const stepIdx = steps.findIndex((s) => s.key === step);
 
   return (
     <div className="space-y-6 max-w-[640px] mx-auto">
       <div>
-        <h1 className="rz-page-title flex items-center gap-2"><CreditCard size={20} className="text-[#0B5CFF]" /> Live Checkout</h1>
-        <p className="rz-page-desc mt-1">Razorpay Test Mode — <span className="font-medium text-emerald-700">UPI recommended</span> (<span className="rz-mono bg-white border px-1.5 py-0.5 rounded">success@razorpay</span>) or card. Webhook fires live.</p>
+        <h1 className="rz-page-title flex items-center gap-2"><CreditCard size={20} className="text-[#0B5CFF]" /> Checkout</h1>
+        <p className="rz-page-desc mt-1">Complete a payment to trigger coordination.</p>
       </div>
 
       {/* Stepper — Razorpay style */}
@@ -155,8 +144,8 @@ export default function CheckoutPage() {
         <div className="rz-card p-6 space-y-4">
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-lg bg-[#0B5CFF] text-white flex items-center justify-center"><CreditCard size={14} /></span>
-            <h2 className="rz-section-title">Create Test Payment</h2>
-            <span className="ml-auto rz-pill bg-slate-50 border text-slate-500">Test mode • INR</span>
+            <h2 className="rz-section-title">Create Payment</h2>
+            <span className="ml-auto rz-pill bg-slate-50 border text-slate-500">INR</span>
           </div>
           <div className="space-y-3">
             <label>
@@ -173,27 +162,6 @@ export default function CheckoutPage() {
           <button onClick={handlePayment} disabled={loading || !selectedCustomer || !razorpayLoaded} className="w-full rz-btn-primary py-3 text-[14px]">
             {!razorpayLoaded ? <><Loader2 size={14} className="animate-spin" /> Loading Razorpay…</> : `Pay ₹${amount} →`}
           </button>
-          <div className="rounded-xl bg-[#F9FAFB] border p-3 space-y-2">
-            <div className="text-xs font-semibold text-slate-700">Test payments — popup shows only enabled methods</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5">
-                <div className="font-semibold text-emerald-800">UPI</div>
-                <div className="rz-mono mt-1 text-emerald-700">success@razorpay</div>
-                <div className="text-slate-500 mt-1">If not in popup: enable in Dashboard → Payment Methods → UPI (test)</div>
-              </div>
-              <div className="rounded-lg bg-white border p-2.5">
-                <div className="font-semibold text-slate-700">Card</div>
-                <div className="rz-mono mt-1">5267 3181 8797 5449</div>
-                <div className="text-slate-500 mt-1">If “international not supported” → enable International Cards in Dashboard</div>
-              </div>
-              <div className="rounded-lg bg-white border p-2.5">
-                <div className="font-semibold text-slate-700">Netbanking</div>
-                <div className="text-slate-600 mt-1">Any bank → Success</div>
-                <div className="text-slate-500 mt-1">If missing: enable Netbanking in Dashboard</div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-500 leading-relaxed">Your popup shows <b>only Cards</b> because UPI/Netbanking are disabled for <span className="rz-mono bg-white border px-1 rounded">rzp_test_XXXX</span> (your test Key ID) → Razorpay Dashboard (Test Mode) → Settings → Payment Methods → toggle UPI + Netbanking + Wallet ON. Config above now requests all blocks so they appear once enabled.</div>
-          </div>
         </div>
       )}
 
@@ -202,10 +170,10 @@ export default function CheckoutPage() {
           <div className="w-12 h-12 rounded-xl bg-[#F2F4F7] border flex items-center justify-center mx-auto">
             {step === "paying" ? <CreditCard size={18} className="text-[#0B5CFF]" /> : <Loader2 size={18} className="animate-spin text-[#0B5CFF]" />}
           </div>
-          <div className="text-[16px] font-semibold">{step === "paying" ? "Complete payment in Razorpay" : "Waiting for webhook…"}</div>
-          <div className="text-sm text-slate-500">{webhookStatus || "Processing…"}</div>
+          <div className="text-[16px] font-semibold">{step === "paying" ? "Complete payment in Razorpay" : "Confirming payment…"}</div>
+          <div className="text-sm text-slate-500">{statusMessage || "Processing…"}</div>
           {orderResult && <div className="rz-mono bg-[#F9FAFB] border rounded-xl px-3 py-2 text-slate-500">Order {orderResult.order_id} {orderResult.payment_id ? `• Payment ${orderResult.payment_id}` : ""}</div>}
-          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400"><Clock size={12} /> Webhook via ngrok • up to 30s</div>
+          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400"><Clock size={12} /> Confirming payment • up to 30s</div>
         </div>
       )}
 
@@ -265,7 +233,7 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          <button onClick={() => { setStep("form"); setOrderResult(null); setDecision(null); setError(null); setWebhookStatus(""); }} className="rz-btn-secondary"><ArrowLeft size={14} /> Pay again</button>
+          <button onClick={() => { setStep("form"); setOrderResult(null); setDecision(null); setError(null); setStatusMessage(""); }} className="rz-btn-secondary"><ArrowLeft size={14} /> Pay again</button>
         </div>
       )}
 

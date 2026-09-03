@@ -5,7 +5,7 @@ import { CreditCard, Zap, GitBranch, BarChart3, FlaskConical, Settings2, Users, 
 
 const groups = [
   {
-    label: "LIVE",
+    label: "PAYMENTS",
     items: [
       { href: "/checkout", icon: CreditCard, label: "Checkout" },
       { href: "/ops", icon: Zap, label: "Ops Console" },
@@ -29,10 +29,16 @@ const groups = [
   },
 ];
 
+const allHrefs = groups.flatMap((g) => g.items.map((i) => i.href));
+
 export default function Sidebar() {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    pathname === href || (href !== "/" && pathname?.startsWith(href));
+  // Longest-prefix match wins, so nested routes (e.g. /simulation/scorecard)
+  // highlight exactly one entry instead of every ancestor.
+  const activeHref = allHrefs
+    .filter((h) => pathname === h || (h !== "/" && pathname?.startsWith(h + "/")))
+    .sort((a, b) => b.length - a.length)[0];
+  const isActive = (href: string) => href === activeHref;
 
   return (
     <aside className="w-[240px] bg-[#0B1020] text-white flex flex-col shrink-0 border-r border-white/[0.06] sticky top-0 h-screen">
@@ -70,17 +76,6 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
-
-      <div className="px-4 py-4 border-t border-white/[0.07] space-y-3">
-        <div className="flex items-center gap-2 text-[11px] font-medium text-slate-300">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" /> Live • Razorpay Test
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="rz-pill bg-white/10 text-slate-300 border border-white/10 text-[10px]">Polling 2s</span>
-          <span className="rz-pill bg-white/10 text-slate-300 border border-white/10 text-[10px]">95% CI</span>
-          <span className="rz-pill bg-white/10 text-slate-300 border border-white/10 text-[10px]">WAL</span>
-        </div>
-      </div>
     </aside>
   );
 }

@@ -3,6 +3,10 @@
 Hot path: XADD razor:inbox -> XREADGROUP reasoning consumers.
 Cold path: DB inbox_entries always written for replay/audit.
 If REDIS_URL empty or redis unavailable -> in-memory/DB fallback (tests, dev without docker).
+
+Ordering guarantee: the DB row is committed BEFORE the Redis message is
+published, so a worker that dequeues immediately can always find the
+matching inbox row and never races an uncommitted webhook transaction.
 """
 import json
 import uuid
@@ -42,72 +46,102 @@ def get_redis():
         return None
 
 
-def enqueue(event: str, payload: Dict[str, Any], customer_id: Optional[str] = None, order_id: Optional[str] = None, db_session=None) -> str:
-    """Enqueue to Redis Stream (hot) + DB inbox (cold). Returns inbox_id. If db_session passed, reuse it to avoid sqlite lock."""
-    inbox_id = f"inbox_{uuid.uuid4().hex[:12]}"
-    now = datetime.now(timezone.utc).isoformat()
-    entry = {
-        "id": inbox_id,
-        "event": event,
-        "payload": json.dumps(payload),
-        "customer_id": customer_id or "",
-        "order_id": order_id or "",
-        "merchant_id": settings.MERCHANT_ID,
-        "created_at": now,
-    }
-    # 1. Hot: Redis XADD (never blocks webhook if down)
+def publish_inbox_to_redis(inbox_id: str, event: str, payload: Dict[str, Any],
+                           customer_id: Optional[str] = None,
+                           order_id: Optional[str] = None) -> bool:
+    """Publish an already-committed inbox row to the Redis hot path.
+
+    Never touches the DB. Returns True if published, False if Redis is
+    down/absent (DB poller will pick the row up instead).
+    """
     r = get_redis()
-    if r is not None:
-        try:
-            r.xadd(settings.REDIS_STREAM, entry)
-            logger.info("Enqueued %s to Redis %s", inbox_id, settings.REDIS_STREAM)
-        except Exception as e:
-            logger.warning("Redis XADD failed, DB only: %s", e)
-    # 2. Cold: DB inbox_entries (always)
-    # Reuse passed session to avoid separate connection lock when called inside webhook transaction
+    if r is None:
+        return False
+    try:
+        r.xadd(settings.REDIS_STREAM, {
+            "id": inbox_id,
+            "event": event,
+            "payload": json.dumps(payload),
+            "customer_id": customer_id or "",
+            "order_id": order_id or "",
+            "merchant_id": settings.MERCHANT_ID,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info("Published %s to Redis %s", inbox_id, settings.REDIS_STREAM)
+        return True
+    except Exception as e:
+        logger.warning("Redis XADD failed for %s (DB fallback will cover): %s", inbox_id, e)
+        return False
+
+
+def _insert_inbox_row(db_session, inbox_id: str, event: str, payload: Dict[str, Any],
+                      customer_id: Optional[str], order_id: Optional[str]) -> None:
+    from app.models.inbox import InboxEntry
+    ie = InboxEntry(
+        id=inbox_id,
+        event=event,
+        customer_id=customer_id,
+        order_id=order_id,
+        merchant_id=settings.MERCHANT_ID,
+        payload=json.dumps(payload),
+        status="queued",
+    )
+    db_session.add(ie)
+    db_session.flush()
+
+
+def enqueue(event: str, payload: Dict[str, Any], customer_id: Optional[str] = None, order_id: Optional[str] = None, db_session=None) -> str:
+    """Durably enqueue: DB commit first, Redis publish second.
+
+    If db_session is passed, the row is flushed into it and the CALLER
+    owns the commit (webhook commits order+inbox atomically, then we
+    publish to Redis separately). Otherwise we open our own session,
+    commit with retry, then publish.
+    """
+    from app.db.database import SessionLocal, commit_with_retry, is_locked_error
+
+    inbox_id = f"inbox_{uuid.uuid4().hex[:12]}"
+
+    # Caller-owned session (webhook hot path): flush only, no commit here.
+    # Caller must commit_with_retry() then call publish_inbox_to_redis().
     if db_session is not None:
         try:
-            from app.models.inbox import InboxEntry
-            ie = InboxEntry(
-                id=inbox_id,
-                event=event,
-                customer_id=customer_id,
-                order_id=order_id,
-                merchant_id=settings.MERCHANT_ID,
-                payload=json.dumps(payload),
-                status="queued",
-            )
-            db_session.add(ie)
-            db_session.flush()
+            _insert_inbox_row(db_session, inbox_id, event, payload, customer_id, order_id)
         except Exception as e:
-            logger.warning("DB inbox write (same session) failed: %s", e)
-        return inbox_id
-    for attempt in range(3):
-        try:
-            from app.db.database import SessionLocal
-            from app.models.inbox import InboxEntry
-            db = SessionLocal()
             try:
-                ie = InboxEntry(
-                    id=inbox_id,
-                    event=event,
-                    customer_id=customer_id,
-                    order_id=order_id,
-                    merchant_id=settings.MERCHANT_ID,
-                    payload=json.dumps(payload),
-                    status="queued",
-                )
-                db.add(ie)
-                db.commit()
-            finally:
-                db.close()
+                db_session.rollback()
+            except Exception:
+                pass
+            logger.warning("DB inbox write (same session) failed, will retry with fresh session: %s", e)
+            # Fall through to fresh-session path so the inbox row is not lost.
+            # (Caller will see the rollback; it retries its whole unit of work.)
+            raise
+        return inbox_id
+
+    # Standalone path: own session, commit with retry, then publish.
+    for attempt in range(5):
+        db = SessionLocal()
+        try:
+            try:
+                _insert_inbox_row(db, inbox_id, event, payload, customer_id, order_id)
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise
+            commit_with_retry(db)
             break
         except Exception as e:
-            if "locked" in str(e).lower() and attempt < 2:
-                time.sleep(0.15 * (attempt + 1))
+            if is_locked_error(e) and attempt < 4:
+                time.sleep(0.05 * (2 ** attempt))
                 continue
             logger.warning("DB inbox write failed: %s", e)
             break
+        finally:
+            db.close()
+
+    publish_inbox_to_redis(inbox_id, event, payload, customer_id, order_id)
     return inbox_id
 
 
@@ -131,6 +165,11 @@ def dequeue_block(timeout_ms: int = 5000) -> Optional[Dict[str, Any]]:
         msg_id, fields = entries[0]
         return {"msg_id": msg_id, "fields": fields}
     except Exception as e:
+        # A blocking read with no messages inside the window raises a socket
+        # timeout. That is the idle steady state, not a failure: stay quiet
+        # and let the worker poll again. Only real errors get logged.
+        if "timeout" in type(e).__name__.lower() or "timeout" in str(e).lower():
+            return None
         logger.warning("XREADGROUP failed: %s", e)
         return None
 
@@ -143,4 +182,3 @@ def ack(msg_id: str):
         r.xack(settings.REDIS_STREAM, settings.REDIS_CONSUMER_GROUP, msg_id)
     except Exception as e:
         logger.warning("XACK failed: %s", e)
-

@@ -18,8 +18,29 @@ router = APIRouter(prefix="/api/v1/simulation", tags=["simulation"])
 # In-memory job store for progress polling (per spec: progress indicator to API response)
 _scorecard_jobs: dict = {}
 _jobs_lock = threading.Lock()
-# Concurrency limiter for simulation (SQLite + CPU) — prevents DB-lock cascade under stress
-_simulation_semaphore = threading.Semaphore(2)
+# Concurrency limiter for simulation — SQLite has a single writer, so only 1
+# simulation at a time. A second request gets 429 instead of a lock cascade.
+_simulation_semaphore = threading.Semaphore(1)
+
+
+def _purge_simulation_rows() -> None:
+    """Delete leftover source='simulation' rows after a failed run.
+
+    Uses a fresh session so it works even when the request session is broken.
+    Never touches live/fallback decisions.
+    """
+    try:
+        from sqlalchemy import text
+        pdb = SessionLocal()
+        try:
+            pdb.execute(text("DELETE FROM audit_entries WHERE decision_id IN (SELECT id FROM coordination_decisions WHERE source='simulation')"))
+            pdb.execute(text("DELETE FROM coordination_decisions WHERE source='simulation'"))
+            pdb.execute(text("DELETE FROM agent_actions WHERE proposed_at < '2026-02-01' AND id NOT IN (SELECT action_id FROM coordination_decisions)"))
+            pdb.commit()
+        finally:
+            pdb.close()
+    except Exception as e:
+        logger.warning("Sim purge failed: %s", e)
 
 
 @router.post("/run")
@@ -46,10 +67,11 @@ def scorecard(payload: SimulationScorecardRequest, db: Session = Depends(get_db)
     """
     merchant_id = payload.merchant_id or settings.MERCHANT_ID
     seeds = payload.seeds[:100]
-    # Concurrency gate: only 2 simulations at a time, others wait (prevents SQLite lock + CPU starvation)
-    acquired = _simulation_semaphore.acquire(timeout=60)
+    # Concurrency gate: SQLite single-writer — don't queue, fail fast so the
+    # user retries instead of stacking writers (which caused 'database is locked').
+    acquired = _simulation_semaphore.acquire(blocking=False)
     if not acquired:
-        raise HTTPException(status_code=429, detail="Simulation busy — try again, 2 concurrent limit")
+        raise HTTPException(status_code=429, detail="Simulation already running — wait for it to finish and try again (1 at a time on SQLite)")
     try:
         engine = SimulationEngine(db)
         result = engine.run(
@@ -60,6 +82,13 @@ def scorecard(payload: SimulationScorecardRequest, db: Session = Depends(get_db)
         )
     except Exception as e:
         logger.exception("Scorecard simulation failed: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        _purge_simulation_rows()
+        if "database is locked" in str(e).lower():
+            raise HTTPException(status_code=503, detail="SQLite was busy (another run was still finishing). Wait ~30s and run again — only 1 simulation at a time.")
         raise HTTPException(status_code=500, detail=f"Scorecard failed: {str(e)}")
     finally:
         _simulation_semaphore.release()
@@ -229,17 +258,21 @@ def scorecard(payload: SimulationScorecardRequest, db: Session = Depends(get_db)
         "per_seed": result["per_seed"],
         "aggregate": result["aggregate"],
         "significance": sig,
+        "dispatcher": result.get("dispatcher", {"wins": {}, "races": 0, "policy_blocks": 0, "governor_blocks": 0}),
     }
+    _dw = (result.get("dispatcher") or {}).get("wins") or {}
+    scorecard["agent_wins_chart"] = [{"name": k, "value": v} for k, v in sorted(_dw.items(), key=lambda kv: kv[1], reverse=True)]
     return scorecard
 
 
 def _run_scorecard_async_job(job_id: str, payload: dict):
     """Background worker for scorecard with per-seed progress updates."""
-    # Async also respects semaphore
-    if not _simulation_semaphore.acquire(timeout=60):
+    # Same single-writer gate — non-blocking so a stale sync request can't
+    # stack a second writer behind this job.
+    if not _simulation_semaphore.acquire(blocking=False):
         with _jobs_lock:
             _scorecard_jobs[job_id]["status"] = "failed"
-            _scorecard_jobs[job_id]["error"] = "Simulation busy — semaphore timeout"
+            _scorecard_jobs[job_id]["error"] = "Simulation already running — wait for it to finish and try again (1 at a time on SQLite)"
         return
     merchant_id = payload.get("merchant_id") or settings.MERCHANT_ID
     seeds = payload.get("seeds", [42, 137, 256])[:100]
@@ -333,7 +366,10 @@ def _run_scorecard_async_job(job_id: str, payload: dict):
             "per_seed": result["per_seed"],
             "aggregate": result["aggregate"],
             "significance": sig,
+            "dispatcher": result.get("dispatcher", {"wins": {}, "races": 0, "policy_blocks": 0, "governor_blocks": 0}),
         }
+        _adw = (result.get("dispatcher") or {}).get("wins") or {}
+        scorecard["agent_wins_chart"] = [{"name": k, "value": v} for k, v in sorted(_adw.items(), key=lambda kv: kv[1], reverse=True)]
         with _jobs_lock:
             _scorecard_jobs[job_id]["status"] = "completed"
             _scorecard_jobs[job_id]["progress"] = 100
@@ -396,9 +432,24 @@ def seed_data(num_customers: int = 100, merchant_id: str = None, db: Session = D
     merchant_id = merchant_id or settings.MERCHANT_ID
     customers = generate_customers(num_customers, seed=42, merchant_id=merchant_id)
     created = 0
+    healed = 0
     for c in customers:
         exists = db.query(CustomerContext).filter(CustomerContext.id == c["id"]).first()
-        if not exists:
+        if exists:
+            # Upsert: heal stale/blank identity fields instead of skipping.
+            if not exists.name:
+                exists.name = c["name"]
+                healed += 1
+            if not exists.city:
+                exists.city = c["city"]
+            if not exists.email:
+                exists.email = c["email"]
+            if not exists.phone:
+                exists.phone = c["phone"]
+            if not exists.archetype:
+                exists.archetype = c["archetype"]
+            db.add(exists)
+        else:
             cust = CustomerContext(
                 id=c["id"],
                 merchant_id=c["merchant_id"],
@@ -421,5 +472,12 @@ def seed_data(num_customers: int = 100, merchant_id: str = None, db: Session = D
             )
             db.add(cust)
             created += 1
+    # Repair any out-of-seed stale rows (other seeds, old bugs): nameless → id-derived.
+    try:
+        from sqlalchemy import text as _text
+        db.execute(_text("UPDATE customer_context SET name = id WHERE name IS NULL OR name = ''"))
+        db.execute(_text("UPDATE customer_context SET archetype = 'new_customer' WHERE archetype IS NULL OR archetype = ''"))
+    except Exception:
+        pass
     db.commit()
-    return {"created": created, "total_requested": num_customers, "merchant_id": merchant_id}
+    return {"created": created, "healed": healed, "total_requested": num_customers, "merchant_id": merchant_id}

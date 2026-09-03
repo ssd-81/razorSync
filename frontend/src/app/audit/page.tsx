@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { formatISTTime, formatISTDateTime } from "@/lib/format";
 import { Check, X, AlertTriangle, MessageCircle, Mail, Smartphone, Bell, RefreshCw, ShoppingCart, TrendingUp, Wallet, ClipboardList, Filter } from "lucide-react";
 
 interface AuditEntry {
@@ -33,7 +34,7 @@ const actionMeta: Record<string, any> = {
 };
 
 function formatTime(ts: string) {
-  try { return new Date(ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch { return ts; }
+  return formatISTTime(ts);
 }
 
 export default function AuditPage() {
@@ -102,7 +103,7 @@ export default function AuditPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#0B1020]"><AIcon size={14} className="text-slate-400" />{entry.action_type?.replaceAll("_", " ")}</span>
                         <span className={`rz-pill border text-[11px] ${dMeta.color}`}>{entry.decision}</span>
-                        <span className="ml-auto rz-mono bg-white border px-2 py-0.5 rounded-full text-slate-500">{formatTime(entry.timestamp)}</span>
+                        <span className="ml-auto rz-mono bg-white border px-2 py-0.5 rounded-full text-slate-500" title={formatISTDateTime(entry.timestamp)}>{formatTime(entry.timestamp)} IST</span>
                       </div>
                       <p className="text-[13px] leading-relaxed text-slate-600 mt-2">{entry.reasoning || "No reasoning provided."}</p>
                       <div className="flex flex-wrap gap-1.5 mt-3">

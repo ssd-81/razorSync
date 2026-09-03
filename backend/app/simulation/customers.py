@@ -33,7 +33,7 @@ def generate_customers(num: int, seed: int, merchant_id: str = "merchant_default
         customers.append({
             "id": cid,
             "merchant_id": merchant_id,
-            "name": f"Customer {i+1}",
+            "name": f"Customer {seed}-{i + 1:04d}",
             "city": random.choice(CITIES),
             "email": f"user{i}_{seed}@example.com",
             "phone": f"90000{i:05d}",

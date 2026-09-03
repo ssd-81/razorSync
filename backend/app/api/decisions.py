@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.decision import CoordinationDecision
 from app.models.action import AgentAction
+from app.utils.time import utc_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/decisions", tags=["decisions"])
@@ -36,10 +37,15 @@ def recent_decisions(
 
     decisions = q.limit(limit).all()
     # Join to get action details for chain visualization
+    import json as _json
     result = []
     for d in decisions:
         # fetch action
         action = db.query(AgentAction).filter(AgentAction.id == d.action_id).first()
+        try:
+            cands = _json.loads(getattr(d, "dispatcher_candidates", None) or "[]")
+        except Exception:
+            cands = []
         result.append(
             {
                 "id": d.id,
@@ -53,13 +59,17 @@ def recent_decisions(
                 "estimated_revenue_impact": d.estimated_revenue_impact,
                 "confidence": d.confidence,
                 "source": getattr(d, "source", "live"),
-                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "trigger_event": getattr(d, "trigger_event", None),
+                "dispatcher_winner": getattr(d, "dispatcher_winner", None),
+                "dispatcher": {"candidates": cands, "winner": getattr(d, "dispatcher_winner", None)},
+                "created_at": utc_iso(d.created_at),
                 "action": {
                     "agent_type": action.agent_type if action else None,
                     "channel": action.channel if action else None,
                     "amount_involved": action.amount_involved if action else None,
                     "discount_offered": action.discount_offered if action else None,
-                    "proposed_at": action.proposed_at.isoformat() if action and action.proposed_at else None,
+                    "message_preview": action.message_template if action else None,
+                    "proposed_at": utc_iso(action.proposed_at) if action else None,
                 }
                 if action
                 else None,

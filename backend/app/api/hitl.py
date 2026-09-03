@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.db.database import get_db
+from app.utils.time import utc_iso
 from app.models.hitl import SuspendedAction, HITLTicket
 from app.models.decision import CoordinationDecision
 from app.models.action import AgentAction
@@ -103,7 +104,7 @@ def suspend_action(action: AgentAction, customer: CustomerContext, guardrail_inf
         "message_template": action.message_template,
         "discount_offered": action.discount_offered,
         "amount_involved": action.amount_involved,
-        "proposed_at": action.proposed_at.isoformat() if action.proposed_at else None,
+        "proposed_at": utc_iso(action.proposed_at),
         "proposed_delay_seconds": action.proposed_delay_seconds,
         "confidence": action.confidence,
         "reasoning": action.reasoning,
@@ -141,7 +142,7 @@ def suspend_action(action: AgentAction, customer: CustomerContext, guardrail_inf
         "ticket_id": ticket.id,
         "guardrail": guardrail_info["guardrail"],
         "reason": guardrail_info["reason"],
-        "expires_at": expires_at.isoformat(),
+        "expires_at": utc_iso(expires_at),
     }
 
 
@@ -163,8 +164,8 @@ def list_pending_tickets(db: Session = Depends(get_db)):
             "reason": t.reason,
             "guardrail": suspended.guardrail_triggered if suspended else None,
             "customer_id": suspended.customer_id if suspended else None,
-            "created_at": t.created_at.isoformat() if t.created_at else None,
-            "expires_at": suspended.expires_at.isoformat() if suspended else None,
+            "created_at": utc_iso(t.created_at),
+            "expires_at": utc_iso(suspended.expires_at) if suspended else None,
             "action_payload": json.loads(suspended.action_payload) if suspended else None,
         })
     return {"tickets": result, "count": len(result)}
@@ -187,8 +188,8 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db)):
             "decision": ticket.decision,
             "override": ticket.override,
             "override_reason": ticket.override_reason,
-            "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
-            "resumed_at": ticket.resumed_at.isoformat() if ticket.resumed_at else None,
+            "created_at": utc_iso(ticket.created_at),
+            "resumed_at": utc_iso(ticket.resumed_at),
         },
         "suspended_action": {
             "id": suspended.id if suspended else None,
@@ -197,7 +198,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db)):
             "guardrail_reason": suspended.guardrail_reason if suspended else None,
             "action_payload": json.loads(suspended.action_payload) if suspended else None,
             "customer_snapshot": json.loads(suspended.customer_snapshot) if suspended else None,
-            "expires_at": suspended.expires_at.isoformat() if suspended else None,
+            "expires_at": utc_iso(suspended.expires_at) if suspended else None,
             "status": suspended.status if suspended else None,
         } if suspended else None,
     }

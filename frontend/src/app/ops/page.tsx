@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "@/lib/api";
-import { MessageCircle, Smartphone, Mail, Bell, MonitorSmartphone, Check, X, Clock, AlertTriangle, Zap, Activity, Cpu, Database } from "lucide-react";
-import { safeFixed } from "@/lib/format";
+import { formatISTTime, formatISTDateTime } from "@/lib/format";
+import { MessageCircle, Smartphone, Mail, Bell, MonitorSmartphone, Check, Ban, Clock, AlertTriangle, Activity, Cpu } from "lucide-react";
+import FullCycleCard from "@/components/FullCycleCard";
 
 interface Decision {
   id: string;
@@ -12,7 +13,10 @@ interface Decision {
   reasoning: string;
   source: string;
   created_at: string;
-  action: { agent_type: string; channel: string; amount_involved: number; discount_offered: number } | null;
+  trigger_event?: string | null;
+  dispatcher_winner?: string | null;
+  dispatcher?: { candidates: any[]; winner?: string | null } | null;
+  action: { agent_type: string; channel: string; amount_involved: number; discount_offered: number; message_preview?: string | null } | null;
   rules_applied: string | null;
 }
 
@@ -43,7 +47,7 @@ export default function OpsPage() {
   const [inbox, setInbox] = useState<any[]>([]);
   const [agents, setAgents] = useState<any>(null);
   const [llm, setLlm] = useState<any>(null);
-  const [dispatcher, setDispatcher] = useState<any>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -78,7 +82,7 @@ export default function OpsPage() {
         if (Array.isArray(ib)) setInbox(ib);
       } catch {}
     };
-    // LLM status is slow and not needed every 2s — poll every 10s separately
+    // LLM status changes rarely — refresh on its own slower loop.
     const llmTick = async () => {
       if (document.hidden || cancelled) return;
       const ls = await apiFetch("/api/v1/agents/llm/status").catch(()=>null);
@@ -96,7 +100,7 @@ export default function OpsPage() {
       const body = { amount: amount*100, currency: "INR", customer_id: selectedCustomer, receipt: `rcpt_${Date.now()}` };
       const r = await apiFetch("/api/v1/orders", { method: "POST", body: JSON.stringify(body) });
       setOrderResult(r); if (r.banner) setBanner(r.banner);
-      if (r.decision) setDispatcher(null);
+      else setBanner(r.note || `Order ${r.order?.id} created — send a test event or complete payment for a decision.`);
       setTimeout(()=> apiFetch("/api/v1/webhook/inbox?limit=5").then(setInbox).catch(()=>{}), 800);
     } catch (e:any) { setBanner(String(e)); }
     finally { setLoadingOrder(false); }
@@ -117,7 +121,6 @@ export default function OpsPage() {
       const sig = Array.from(new Uint8Array(sigBuf)).map(b=>b.toString(16).padStart(2,"0")).join("");
       const r = await apiFetch("/api/v1/webhook/razorpay", { method:"POST", body: raw, headers: {"X-Razorpay-Signature": sig} as any });
       setBanner(`Queued ${r.inbox_id} → ${r.dispatcher?.winner ?? r.decision?.verdict ?? "pending"}`);
-      if (r.dispatcher) setDispatcher(r.dispatcher);
       apiFetch("/api/v1/webhook/inbox?limit=10").then(setInbox).catch(()=>{});
     } catch (e:any) { setBanner(String(e)); }
   };
@@ -133,105 +136,130 @@ export default function OpsPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
-            <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase">Live • Test Mode</span>
-            <span className="rz-pill bg-slate-900 text-white">merchant_default</span>
-          </div>
-          <h1 className="rz-page-title mt-2">Razorpay Coordination Console</h1>
-          <p className="rz-page-desc mt-1 max-w-2xl">Real Razorpay <code className="rz-mono bg-white border px-1.5 py-0.5 rounded">order.create</code> → verified webhook → <span className="font-medium text-slate-700">Dispatcher</span> scores → <span className="font-medium text-slate-700">Governor</span> vetoes → audit. Queued <b>&lt;150ms</b>, reasoning async.</p>
+          <h1 className="rz-page-title mt-2">Operations</h1>
+          <p className="rz-page-desc mt-1 max-w-2xl">Create orders, review every verdict, and inspect how each one was scored.</p>
         </div>
         <div className="hidden md:flex items-center gap-2">
-          <span className={`rz-pill border ${llm?.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{llm?.enabled ? llm.model : "Deterministic"}</span>
-          <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Failure ON" : "Operational"}</span>
+          <span className={`rz-pill border ${!llm ? "bg-white text-slate-400" : llm.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{!llm ? "…" : llm.enabled ? llm.model : "Built-in"}</span>
+          <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Drill on" : "Normal"}</span>
         </div>
       </div>
 
       {banner && <div className="rz-card px-4 py-3 text-sm flex gap-2.5 items-center bg-amber-50 border-amber-200 text-amber-800"><AlertTriangle size={16} className="shrink-0" />{banner}</div>}
 
-      {/* Primary action */}
-      <div className="rz-card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <span className="w-7 h-7 rounded-full bg-[#0B5CFF] text-white flex items-center justify-center"><Zap size={14} /></span>
-          <h2 className="font-semibold text-sm">Create Test Order</h2>
-          <span className="text-xs text-slate-400">Razorpay Test API • {amount*100} paise</span>
-          <span className="ml-auto flex items-center gap-1 text-xs text-slate-500"><Database size={12} /> WAL</span>
-        </div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <label className="flex flex-col gap-1.5">
-            <span className="rz-label">Customer</span>
-            <select value={selectedCustomer} onChange={(e)=>setSelectedCustomer(e.target.value)} className="rz-select min-w-[240px]">
-              {customers.map((c)=><option key={c.id} value={c.id}>{c.id} — {c.name || c.archetype}</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="rz-label">Amount ₹</span>
-            <input type="number" value={amount} onChange={(e)=>setAmount(Number(e.target.value))} className="rz-input w-28" />
-          </label>
-          <button onClick={createOrder} disabled={loadingOrder} className="rz-btn-primary">{loadingOrder?"Creating…":"Create Order"}</button>
-          <button onClick={createWebhookSample} className="rz-btn-secondary"><Activity size={14} /> Trigger Webhook</button>
-        </div>
-        {orderResult && (
-          <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
-            <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Order ID</div><div className="rz-mono font-medium truncate mt-1">{orderResult.order?.id}</div></div>
-            <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Status</div><div className={`font-semibold mt-1 ${orderResult.order?.fallback?"text-amber-600":"text-emerald-600"}`}>{orderResult.order?.status}</div></div>
-            <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Latency</div><div className="font-medium mt-1">{orderResult.latency_ms ?? "—"} ms</div></div>
-            {orderResult.decision && <div className="col-span-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs leading-relaxed"><span className="font-semibold">Decision:</span> {orderResult.decision.verdict} — {orderResult.decision.reasoning} <span className="rz-pill bg-slate-900 text-white ml-2">{orderResult.decision.source}</span></div>}
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rz-card p-5">
-          <div className="flex items-center gap-2">
-            <span className="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center"><Cpu size={14} /></span>
-            <h2 className="font-semibold text-sm">Agents</h2>
-            <span className="text-xs text-slate-400">from agents/config.yaml • {agents ? Object.keys(agents.agents || agents).length : "—"} configured</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-            {agents ? Object.entries(agents.agents || agents).slice(0,4).map(([k,v]:any)=> {
-              const chs = (v as any).channels||[];
-              return (
-              <div key={k} className="border rounded-xl p-3 bg-white hover:border-slate-300 transition">
-                <div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${AGENT_META[k]?.dot || "bg-slate-400"}`} /><span className="font-semibold text-sm">{AGENT_META[k]?.label || k}</span><span className="ml-auto rz-mono bg-slate-100 border px-2 py-0.5 rounded text-[11px]">{k}</span></div>
-                <div className="text-xs text-slate-500 mt-1.5 leading-relaxed line-clamp-2">{(v as any).description}</div>
-                <div className="flex gap-1.5 mt-2.5 flex-wrap">
-                  {chs.map((ch:string)=>{const m=CHANNEL_META[ch]; const Icon=m?.Icon; return <span key={ch} className={`inline-flex items-center gap-1 rz-pill border ${m?.color || "bg-white"}`}><Icon size={12} />{ch}</span>})}
-                </div>
-                <div className="text-[11px] text-slate-400 mt-2">trigger <code className="rz-mono bg-slate-50 px-1 py-0.5 rounded">{(v as any).trigger}</code></div>
-              </div>
-            )}) : <div className="text-xs text-slate-400">Loading…</div>}
-          </div>
-          {dispatcher && (
-            <div className="mt-4 border rounded-xl p-3 bg-blue-50/50 border-blue-200">
-              <div className="text-xs font-semibold text-blue-900 flex items-center gap-2"><Zap size={12} /> Dispatcher — winner <span className="rz-pill bg-slate-900 text-white">{dispatcher.winner}</span> <span className="ml-auto text-[11px] font-normal text-blue-700">{dispatcher.candidates?.length} candidates scored</span></div>
-              <div className="grid grid-cols-2 gap-2 mt-3">
-                {dispatcher.candidates?.map((c:any)=>(
-                  <div key={c.agent_type} className={`rounded-lg p-2.5 border text-xs ${c.agent_type===dispatcher.winner?"bg-white border-blue-300 shadow-sm":"bg-white/60 border-blue-100"}`}>
-                    <div className="font-medium flex items-center gap-1">{c.agent_type} <span className={`ml-auto rz-pill ${c.agent_type===dispatcher.winner?"bg-emerald-600 text-white":"bg-slate-100 text-slate-600"}`}>{safeFixed(c.score,1)}</span></div>
-                    <div className="text-[11px] text-slate-500 mt-1">{c.channel} {c.score_breakdown? `est ${safeFixed(c.score_breakdown.est_revenue,0)} • churn ${safeFixed(c.score_breakdown.churn_risk,0)}`:""}</div>
-                  </div>
-                ))}
-              </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        {/* Main column */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="rz-card p-5">
+            <h2 className="font-semibold text-sm">Create order</h2>
+            <p className="text-xs text-slate-500 mt-1 mb-4">An order starts the whole chain — create one, or send a ready-made event.</p>
+            <div className="flex flex-wrap gap-3 items-end">
+              <label className="flex flex-col gap-1.5">
+                <span className="rz-label">Customer</span>
+                <select value={selectedCustomer} onChange={(e)=>setSelectedCustomer(e.target.value)} className="rz-select min-w-[240px]">
+                  {customers.map((c)=><option key={c.id} value={c.id}>{c.id} — {c.name || c.archetype}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="rz-label">Amount ₹</span>
+                <input type="number" value={amount} onChange={(e)=>setAmount(Number(e.target.value))} className="rz-input w-28" />
+              </label>
+              <button onClick={createOrder} disabled={loadingOrder} className="rz-btn-primary">{loadingOrder?"Creating…":"Create Order"}</button>
+              <button onClick={createWebhookSample} className="rz-btn-secondary"><Activity size={14} /> Send test event</button>
             </div>
-          )}
+            {orderResult && (
+              <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
+                <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Order ID</div><div className="rz-mono font-medium truncate mt-1">{orderResult.order?.id}</div></div>
+                <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Status</div><div className={`font-semibold mt-1 ${orderResult.order?.fallback?"text-amber-600":"text-emerald-600"}`}>{orderResult.order?.status}</div></div>
+                <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Latency</div><div className="font-medium mt-1">{orderResult.latency_ms ?? "—"} ms</div></div>
+                {orderResult.note && <div className="col-span-3 bg-slate-50 border rounded-lg p-3 text-xs leading-relaxed text-slate-600">{orderResult.note}</div>}
+              </div>
+            )}
+          </div>
+
+          <div className="rz-card p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="font-semibold text-sm">Decisions</h2>
+              <span className="ml-auto text-xs text-slate-400">{decisions.length} decisions</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1 mb-4">Every verdict lands here with the reason attached — click any row to inspect the full race. Newest at the bottom.</p>
+            {(() => {
+              const sel = decisions.find((x) => x.id === selectedId) || [...decisions].slice(-1)[0];
+              return sel ? <div className="mb-4"><FullCycleCard d={sel as any} /></div> : null;
+            })()}
+            {decisions.length===0 ? <div className="text-sm text-slate-400 py-8 text-center border border-dashed rounded-xl">Nothing yet — complete step 1 above</div> : (
+              <div className="relative ml-4">
+                <div className="timeline-line" />
+                <div className="space-y-3">
+                  {[...decisions].reverse().slice(0,10).map((d)=> {
+                    const ch = d.action?.channel; const meta = ch ? CHANNEL_META[ch] : null; const Icon = meta?.Icon;
+                    const isBlocked = d.verdict==="blocked";
+                    const isSel = d.id === (selectedId || [...decisions].slice(-1)[0]?.id);
+                    return (
+                    <div key={d.id} className="relative pl-8">
+                      <span className={`absolute left-[6px] top-3 w-2.5 h-2.5 rounded-full ring-4 ring-white ${isBlocked?"bg-slate-300":"bg-emerald-500"}`} />
+                      <button onClick={()=>setSelectedId(d.id)} className="w-full text-left">
+                      <div className={`rounded-xl border p-3 transition bg-white ${isSel?"ring-1 ring-[#0B5CFF] border-[#0B5CFF]/40":"border-slate-200"}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`inline-flex items-center gap-1 rz-pill border ${isBlocked?"bg-slate-100 text-slate-500 border-slate-200":"bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{isBlocked?<Ban size={12} className="text-slate-400" />:<Check size={12} className="text-emerald-600" />}{d.verdict}</span>
+                          {d.action && <span className={`inline-flex items-center gap-1 rz-pill border ${meta?.color || "bg-slate-50"}`}>{Icon && <Icon size={12} />}{AGENT_META[d.action.agent_type]?.label || d.action.agent_type}</span>}
+                          <span className="rz-pill bg-slate-900 text-white text-[11px]">{d.source}</span>
+                          <span className="ml-auto text-[11px] text-slate-400" title={formatISTDateTime(d.created_at)}>{formatISTTime(d.created_at)} IST • {d.customer_id.slice(0,12)}</span>
+                        </div>
+                        <div className="text-sm mt-2 font-medium leading-relaxed text-slate-800">{d.reasoning}</div>
+                        {d.block_reason && <div className="text-xs text-slate-500 mt-1.5 pl-2 border-l-2 border-slate-200 leading-relaxed">{d.block_reason}</div>}
+                        {(d.dispatcher?.candidates?.length || d.trigger_event) && <div className="text-[11px] text-slate-500 mt-1.5 rz-mono">{d.trigger_event || "event"} • {(d.dispatcher?.candidates?.length || 0)} scored • winner {d.dispatcher?.winner || d.dispatcher_winner || d.action?.agent_type || "—"}</div>}
+                      </div>
+                      </button>
+                    </div>
+                  )})}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rz-card p-5">
+            <h2 className="font-semibold text-sm">Agents and scoring</h2>
+            <p className="text-xs text-slate-500 mt-1 mb-4">Each contender is scored on revenue, churn risk, and cost — the winner runs unless a guardrail vetoes it.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {agents ? Object.entries(agents.agents || agents).slice(0,4).map(([k,v]:any)=> {
+                const chs = (v as any).channels||[];
+                return (
+                <div key={k} className="border rounded-xl p-3 bg-white hover:border-slate-300 transition">
+                  <div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${AGENT_META[k]?.dot || "bg-slate-400"}`} /><span className="font-semibold text-sm">{AGENT_META[k]?.label || k}</span><span className="ml-auto rz-mono bg-slate-100 border px-2 py-0.5 rounded text-[11px]">{k}</span></div>
+                  <div className="text-xs text-slate-500 mt-1.5 leading-relaxed line-clamp-2">{(v as any).description}</div>
+                  <div className="flex gap-1.5 mt-2.5 flex-wrap">
+                    {chs.map((ch:string)=>{const m=CHANNEL_META[ch]; const Icon=m?.Icon; return <span key={ch} className={`inline-flex items-center gap-1 rz-pill border ${m?.color || "bg-white"}`}><Icon size={12} />{ch}</span>})}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-2">trigger <code className="rz-mono bg-slate-50 px-1 py-0.5 rounded">{(v as any).trigger}</code></div>
+                </div>
+              )}) : <div className="text-xs text-slate-400">Loading agents…</div>}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">Scores persist on every decision — select any verdict above to replay its race, winner, guardrail veto, and customer message.</p>
+          </div>
+
         </div>
+
+        {/* Side rail: system state */}
         <div className="space-y-4">
           <div className="rz-card p-5">
-            <h2 className="font-semibold text-sm flex items-center gap-2"><Cpu size={14} className="text-violet-600" /> LLM</h2>
+            <h2 className="font-semibold text-sm flex items-center gap-2"><Cpu size={14} className="text-violet-600" /> System</h2>
             <div className="mt-3 space-y-2.5">
               <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border"><span className="text-xs text-slate-500">Provider</span><span className="rz-pill bg-slate-900 text-white">{llm?.provider || "—"}</span></div>
-              <div className="p-2.5 rounded-lg bg-slate-50 border"><div className="text-[11px] uppercase tracking-wide text-slate-500">Model</div><div className="rz-mono font-medium mt-1 truncate">{llm?.model || "—"}</div><div className={`rz-pill mt-2 inline-flex ${llm?.enabled?"bg-violet-600 text-white":"bg-white border text-slate-600"}`}>{llm?.enabled?"enabled":"deterministic"}</div></div>
-              <div className="text-[11px] leading-relaxed text-slate-500 bg-violet-50 border border-violet-100 rounded-lg p-2.5">Switch via <code className="rz-mono bg-white px-1 py-0.5 rounded border">.env LLM_ENDPOINT/MODEL/API_KEY</code>. Empty → fallback.</div>
+              <div className="p-2.5 rounded-lg bg-slate-50 border"><div className="text-[11px] uppercase tracking-wide text-slate-500">Model</div><div className="rz-mono font-medium mt-1 truncate">{llm?.model || "—"}</div><div className={`rz-pill mt-2 inline-flex ${llm?.enabled?"bg-violet-600 text-white":"bg-white border text-slate-600"}`}>{llm?.enabled?"enabled":"built-in"}</div></div>
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border">
+                <span className="text-xs text-slate-500">Outage drill</span>
+                <button onClick={toggleFailure} className={`rz-pill border text-xs font-bold h-7 px-3 ${failure?"bg-amber-500 text-white border-amber-500":"bg-[#0B1020] text-white border-[#0B1020]"}`}>{failure?"On":"Off"}</button>
+              </div>
+              <div className="text-[11px] leading-relaxed text-slate-500">With the drill on, orders take the fallback path: cached decision, banner, audit entry.</div>
             </div>
           </div>
           <div className="rz-card p-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold flex items-center gap-1.5"><Clock size={14} /> Queue</span>
-              <span className="text-[11px] text-slate-400">razor:inbox + DB</span>
+              <span className="text-xs font-semibold flex items-center gap-1.5"><Clock size={14} /> Recent events</span>
             </div>
-            <div className="mt-3 space-y-1.5 max-h-[160px] overflow-auto pr-1">
-              {inbox.length===0? <div className="text-xs text-slate-400 py-6 text-center border border-dashed rounded-lg">No webhooks yet</div> : inbox.slice(0,5).map((i)=>(
+            <div className="mt-3 space-y-1.5 max-h-[300px] overflow-auto pr-1">
+              {inbox.length===0? <div className="text-xs text-slate-400 py-6 text-center border border-dashed rounded-lg">No events yet</div> : inbox.slice(0,8).map((i)=>(
                 <div key={i.id} className="flex items-center gap-2 p-2 rounded-lg border bg-white text-xs">
                   <span className={`h-1.5 w-1.5 rounded-full ${i.status==="completed"?"bg-emerald-500":"bg-amber-500"}`} />
                   <span className="rz-mono flex-1 truncate">{i.event}</span>
@@ -240,44 +268,7 @@ export default function OpsPage() {
               ))}
             </div>
           </div>
-          <div className="rz-card px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-semibold flex items-center gap-1.5"><AlertTriangle size={14} className="text-amber-500" /> Razorpay Failure</span>
-            <button onClick={toggleFailure} className={`rz-pill border text-xs font-bold h-7 px-3 ${failure?"bg-amber-500 text-white border-amber-500":"bg-[#0B1020] text-white border-[#0B1020]"}`}>{failure?"ON — fallback":"OFF — live"}</button>
-          </div>
         </div>
-      </div>
-
-      <div className="rz-card p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <span className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center"><Check size={14} /></span>
-          <h2 className="font-semibold text-sm">Decision Chain</h2>
-          <span className="text-xs text-slate-400">polling 2s • {decisions.length} total</span>
-        </div>
-        {decisions.length===0 ? <div className="text-sm text-slate-400 py-8 text-center border border-dashed rounded-xl">Create an order or trigger webhook</div> : (
-          <div className="relative ml-4">
-            <div className="timeline-line" />
-            <div className="space-y-3">
-              {[...decisions].reverse().slice(0,10).map((d)=> {
-                const ch = d.action?.channel; const meta = ch ? CHANNEL_META[ch] : null; const Icon = meta?.Icon;
-                const isBlocked = d.verdict==="blocked";
-                return (
-                <div key={d.id} className="relative pl-8">
-                  <span className={`absolute left-[6px] top-3 w-2.5 h-2.5 rounded-full ${isBlocked?"bg-red-500":"bg-emerald-500"} ring-4 ring-white`} />
-                  <div className={`rounded-xl border p-3 ${isBlocked?"bg-red-50/50 border-red-200":"bg-white"}`}>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`inline-flex items-center gap-1 rz-pill border ${isBlocked?"bg-red-600 text-white border-red-600":"bg-emerald-600 text-white border-emerald-600"}`}>{isBlocked?<X size={12} />:<Check size={12} />}{d.verdict}</span>
-                      {d.action && <span className={`inline-flex items-center gap-1 rz-pill border ${meta?.color || "bg-slate-50"}`}>{Icon && <Icon size={12} />}{AGENT_META[d.action.agent_type]?.label || d.action.agent_type}</span>}
-                      <span className="rz-pill bg-slate-900 text-white text-[11px]">{d.source}</span>
-                      <span className="ml-auto text-[11px] text-slate-400">{new Date(d.created_at).toLocaleTimeString()} • {d.customer_id.slice(0,12)}</span>
-                    </div>
-                    <div className="text-sm mt-2 font-medium leading-relaxed text-slate-800">{d.reasoning}</div>
-                    {d.block_reason && <div className="text-xs text-red-600 mt-1.5 flex gap-1"><X size={12} className="mt-0.5 shrink-0" />{d.block_reason}</div>}
-                  </div>
-                </div>
-              )})}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.models.audit import AuditEntry
 from app.models.decision import CoordinationDecision
 from app.models.action import AgentAction
+from app.utils.time import utc_iso
 
 router = APIRouter(prefix="/api/v1/audit", tags=["audit"])
 
@@ -57,7 +58,7 @@ def get_audit(
         act = db.query(AgentAction).filter(AgentAction.id == a.action_id).first()
         entries.append({
             "id": a.id,
-            "timestamp": a.timestamp,
+            "timestamp": utc_iso(a.timestamp),
             "customer_id": a.customer_id,
             "merchant_id": a.merchant_id,
             "action_id": a.action_id,

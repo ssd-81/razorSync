@@ -28,4 +28,10 @@ class CoordinationDecision(Base):
     # v2: track source (live razorpay vs simulated vs fallback)
     source = Column(String, default="live")
 
+    # v4: persisted dispatcher trace — full coordination decision in action.
+    # Candidates JSON: [{agent_type, channel, score, confidence, discount_offered, source, score_breakdown}]
+    dispatcher_candidates = Column(String, nullable=True)
+    dispatcher_winner = Column(String, nullable=True)
+    trigger_event = Column(String, nullable=True)
+
     created_at = Column(DateTime, server_default=func.now())

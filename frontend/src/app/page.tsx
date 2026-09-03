@@ -22,15 +22,9 @@ export default function Overview() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="rz-pill bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live • v3 Production
-            </span>
-            <span className="rz-pill bg-slate-900 text-white">merchant_default</span>
-          </div>
           <h1 className="rz-page-title mt-3">RazorSync — Coordination Engine</h1>
           <p className="rz-page-desc mt-2 max-w-3xl">
-            Agents propose. <span className="font-medium text-slate-700">RazorSync disposes.</span> Single decision layer for Razorpay Agent Studio — native primitives, net-value P&amp;L, and human suspension for financial risk.
+            Every agent proposal passes one decision layer — policy scoring, windowed rules, and human review for financial risk — before anything reaches a customer.
           </p>
         </div>
         <Link href="/ops" className="hidden md:inline-flex rz-btn-primary">
@@ -61,12 +55,12 @@ export default function Overview() {
           <div className="flex items-center gap-2 mb-4">
             <span className="w-7 h-7 rounded-lg bg-[#0B5CFF] text-white flex items-center justify-center"><Shield size={14} /></span>
             <h2 className="rz-section-title">Pipeline</h2>
-            <span className="ml-auto rz-pill bg-slate-50 border text-slate-600">WAL • Redis • HITL</span>
+            <span className="ml-auto rz-pill bg-slate-50 border text-slate-600">Pipeline</span>
           </div>
 
           {/* Visual pipeline */}
           <div className="flex items-center gap-1.5 overflow-auto py-1">
-            <PipelineStep label="Webhook" sub="HMAC" color="bg-slate-900 text-white" />
+            <PipelineStep label="Webhook" sub="Verified" color="bg-slate-900 text-white" />
             <ChevronRight size={14} className="text-slate-300 shrink-0" />
             <PipelineStep label="Dispatcher" sub="Policy score" color="bg-[#0B5CFF] text-white" />
             <ChevronRight size={14} className="text-slate-300 shrink-0" />
@@ -88,7 +82,7 @@ export default function Overview() {
               <div className="text-slate-500 mt-1 leading-relaxed">frequency · cooldown · time window · budget · financial ceiling</div>
             </div>
             <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
-              <div className="font-semibold text-amber-800 flex items-center gap-1.5"><Users size={12} /> HITL</div>
+              <div className="font-semibold text-amber-800 flex items-center gap-1.5"><Users size={12} /> Review</div>
               <div className="text-amber-700 mt-1 leading-relaxed">hard → SUSPEND → human approve / reject → re-validate</div>
             </div>
           </div>
@@ -102,9 +96,9 @@ export default function Overview() {
           </div>
           <div className="space-y-3">
             {[
-              { t: "01", d: "Live Checkout → webhook → decision appears" },
+              { t: "01", d: "Checkout → webhook → decision appears" },
               { t: "02", d: "Dispatcher scores → guardrail verdict with reason" },
-              { t: "03", d: "Scorecard — revenue/1k and net value with 95% CI" },
+              { t: "03", d: "Scorecard — revenue per contact and net value" },
               { t: "04", d: "Toggle rules → re-run → compare outcomes" },
             ].map((s) => (
               <div key={s.t} className="flex gap-3">
@@ -123,7 +117,7 @@ export default function Overview() {
           <span className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Start here</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/checkout" className="rz-btn-primary">Live Checkout <ArrowRight size={14} /></Link>
+          <Link href="/checkout" className="rz-btn-primary">Checkout <ArrowRight size={14} /></Link>
           <Link href="/ops" className="rz-btn-primary bg-slate-900 border-slate-900 hover:bg-black">Ops Console</Link>
           <Link href="/execution" className="rz-btn-secondary">Execution Graph</Link>
           <div className="w-px h-6 bg-slate-200 mx-1 self-center hidden sm:block" />

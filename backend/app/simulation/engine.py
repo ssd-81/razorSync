@@ -20,6 +20,31 @@ from app.simulation.metrics import compute_metrics, welch_t_test
 logger = logging.getLogger(__name__)
 
 
+def _safe_flush(db: Session, retries: int = 8) -> None:
+    """Flush with backoff on SQLite 'database is locked'.
+
+    Simulation issues thousands of flushes; a concurrent reader/writer or a
+    lingering request can briefly hold the lock. Unlike commit_with_retry we
+    must NOT rollback here (that would discard the whole scenario batch) —
+    a failed flush leaves the transaction usable, so just wait and retry.
+    """
+    import time as _time
+    from app.db.database import is_locked_error
+    last = None
+    for attempt in range(retries):
+        try:
+            db.flush()
+            return
+        except Exception as e:
+            last = e
+            if is_locked_error(e) and attempt < retries - 1:
+                _time.sleep(0.05 * (2 ** attempt))
+                continue
+            raise
+    if last is not None:
+        raise last
+
+
 def _generate_bundle_for_seed(args):
     """Top-level picklable helper for ProcessPoolExecutor — generates customers+actions for one seed."""
     seed, num_customers, duration_days, merchant_id = args
@@ -50,6 +75,14 @@ def _ensure_customers_in_db(db: Session, customers: List[dict]):
             exists.last_contact_at = None
             exists.last_contact_channel = None
             exists.last_contact_agent = None
+            # Heal identity fields too — stale rows with NULL/empty names otherwise
+            # stay nameless forever (the recurring "no name" data).
+            exists.name = c["name"]
+            exists.city = c["city"]
+            exists.email = c["email"]
+            exists.phone = c["phone"]
+            exists.archetype = c["archetype"]
+            exists.merchant_id = c["merchant_id"]
             # need to update simulation params
             exists.response_probability = c["response_probability"]
             exists.conversion_probability = c["conversion_probability"]
@@ -84,7 +117,7 @@ def _ensure_customers_in_db(db: Session, customers: List[dict]):
                 churned=False,
             )
             db.add(cust)
-    db.flush()
+    _safe_flush(db)
 
 
 def _simulate_customer_response(customer: dict, action: dict, contact_count: int, coordinated: bool = False) -> tuple[str, float, bool]:
@@ -188,7 +221,7 @@ class SimulationEngine:
             rules_snap = self.rules_engine.get_rules_snapshot(merchant_id)
 
             # SCENARIO A: Uncoordinated — all approved, no rules
-            uncoord_decisions, uncoord_revenue = self._run_scenario(customers, all_actions_flat, coordinated=False, rules_snap=rules_snap, seed=seed)
+            uncoord_decisions, uncoord_revenue, _ = self._run_scenario(customers, all_actions_flat, coordinated=False, rules_snap=rules_snap, seed=seed)
             # reset DB state for coordinated run
             _ensure_customers_in_db(self.db, customers)
             self.db.commit()
@@ -197,7 +230,7 @@ class SimulationEngine:
             self._clear_simulation_state(customers)
 
             # SCENARIO B: Coordinated — delegate to RulesEngine
-            coord_decisions, coord_revenue = self._run_scenario(customers, all_actions_flat, coordinated=True, rules_snap=rules_snap, seed=seed)
+            coord_decisions, coord_revenue, coord_disp = self._run_scenario(customers, all_actions_flat, coordinated=True, rules_snap=rules_snap, seed=seed)
             # clear again for next seed to avoid bleed
             self._clear_simulation_state(customers)
 
@@ -233,6 +266,7 @@ class SimulationEngine:
                 "uncoordinated": uncoord_revenue,
                 "coordinated": coord_revenue,
                 "rules_snapshot": rules_snap,
+                "dispatcher": coord_disp,
             })
 
         # Aggregate
@@ -251,6 +285,14 @@ class SimulationEngine:
         if p_val != p_val:
             p_val = 1.0
 
+        # v4: aggregate dispatcher wins across seeds — which agents did the work
+        total_wins: dict = {}
+        total_races = sum((r.get("dispatcher", {}).get("races", 0) or 0) for r in all_results)
+        total_policy = sum((r.get("dispatcher", {}).get("policy_blocks", 0) or 0) for r in all_results)
+        total_gov = sum((r.get("dispatcher", {}).get("governor_blocks", 0) or 0) for r in all_results)
+        for r in all_results:
+            for k, v in (r.get("dispatcher", {}).get("wins", {}) or {}).items():
+                total_wins[k] = total_wins.get(k, 0) + v
         summary = {
             "num_customers": num_customers,
             "seeds": seeds,
@@ -266,6 +308,7 @@ class SimulationEngine:
                 "revenue_per_contact": agg("revenue_per_contact"),
             },
             "significance": {"t_stat": round(t_stat, 3), "p_value": round(p_val, 5)},
+            "dispatcher": {"wins": total_wins, "races": total_races, "policy_blocks": total_policy, "governor_blocks": total_gov},
         }
         return summary
 
@@ -280,11 +323,11 @@ class SimulationEngine:
             self.db.commit()
             base_time = datetime(2026, 1, 15, 6, 0, tzinfo=timezone.utc)
             rules_snap = self.rules_engine.get_rules_snapshot(merchant_id)
-            uncoord_decisions, uncoord_revenue = self._run_scenario(customers, all_actions_flat, coordinated=False, rules_snap=rules_snap, seed=seed)
+            uncoord_decisions, uncoord_revenue, _ = self._run_scenario(customers, all_actions_flat, coordinated=False, rules_snap=rules_snap, seed=seed)
             _ensure_customers_in_db(self.db, customers)
             self.db.commit()
             self._clear_simulation_state(customers)
-            coord_decisions, coord_revenue = self._run_scenario(customers, all_actions_flat, coordinated=True, rules_snap=rules_snap, seed=seed)
+            coord_decisions, coord_revenue, coord_disp = self._run_scenario(customers, all_actions_flat, coordinated=True, rules_snap=rules_snap, seed=seed)
             self._clear_simulation_state(customers)
             uncoordinated_revenues.append(uncoord_revenue["total_revenue"])
             coordinated_revenues.append(coord_revenue["total_revenue"])
@@ -309,7 +352,15 @@ class SimulationEngine:
                 )
                 self.db.add(run)
             self.db.commit()
-            all_results.append({"seed": seed, "uncoordinated": uncoord_revenue, "coordinated": coord_revenue, "rules_snapshot": rules_snap})
+            all_results.append({"seed": seed, "uncoordinated": uncoord_revenue, "coordinated": coord_revenue, "rules_snapshot": rules_snap, "dispatcher": coord_disp})
+        # v4: aggregate dispatcher wins
+        _total_wins: dict = {}
+        for _r in all_results:
+            for _k, _v in (_r.get("dispatcher", {}).get("wins", {}) or {}).items():
+                _total_wins[_k] = _total_wins.get(_k, 0) + _v
+        _total_races = sum((_r.get("dispatcher", {}).get("races", 0) or 0) for _r in all_results)
+        _total_policy = sum((_r.get("dispatcher", {}).get("policy_blocks", 0) or 0) for _r in all_results)
+        _total_gov = sum((_r.get("dispatcher", {}).get("governor_blocks", 0) or 0) for _r in all_results)
         # Aggregate + significance (same as serial path)
         def agg(key):
             vals_u = [r["uncoordinated"][key] for r in all_results]
@@ -335,6 +386,7 @@ class SimulationEngine:
                 "revenue_per_contact": agg("revenue_per_contact"),
             },
             "significance": {"t_stat": round(t_stat, 3), "p_value": round(p_val, 5)},
+            "dispatcher": {"wins": _total_wins, "races": _total_races, "policy_blocks": _total_policy, "governor_blocks": _total_gov},
         }
 
     def _run_scenario(self, customers: List[dict], all_actions: List[dict], coordinated: bool, rules_snap, seed: int):
@@ -343,6 +395,8 @@ class SimulationEngine:
         # track per-customer contact count and churn
         contact_counts: Dict[str, int] = {c["id"]: 0 for c in customers}
         churned: Dict[str, bool] = {c["id"]: False for c in customers}
+        # v4: dispatcher stats — which agents actually won coordinated races
+        disp_stats: Dict[str, Any] = {"wins": {}, "races": 0, "policy_blocks": 0, "governor_blocks": 0}
         # for coordinated we need to persist AgentAction/Decision/Audit in DB for windowed rules
         decisions_out = []
         actions_out = []
@@ -362,29 +416,88 @@ class SimulationEngine:
             rules_triggered = []
 
             if coordinated:
-                # Persist AgentAction to DB for windowed counting
-                # Use a transient ID
+                # v4: dispatcher competition first — same policy scoring as live.
+                # Original action's agent trigger defines the event; winner overrides
+                # channel/discount/confidence. Governor (RulesEngine) still vetoes.
+                from app.simulation.agents import AGENT_DEFS as _ADEFS
+                from app.engine.dispatcher import dispatch as _dispatch
+                trigger_event = _ADEFS.get(action_dict["agent_type"], {}).get("trigger", "order.paid")
+                cust_orm = self.db.query(CustomerContext).filter(CustomerContext.id == cid).first()
+                eff_agent = action_dict["agent_type"]
+                eff_channel = action_dict["channel"]
+                eff_discount = action_dict["discount_offered"]
+                eff_conf = action_dict["confidence"]
+                eff_delay = action_dict["proposed_delay_seconds"]
+                disp_cands: list = []
+                disp_winner: str | None = None
+                if cust_orm is not None:
+                    try:
+                        # Deterministic: simulation evaluates policy, never the LLM.
+                        dr = _dispatch(trigger_event, cust_orm, action_dict["merchant_id"], float(action_dict["amount_involved"] or 0), self.db, use_llm=False)
+                        disp_cands = [{"agent_type": c["agent_type"], "channel": c["channel"], "score": c["score"]} for c in dr.candidates]
+                        if dr.candidates:
+                            disp_stats["races"] += 1
+                        if dr.winner:
+                            w = dr.winner
+                            eff_agent = w["agent_type"]
+                            eff_channel = w["channel"]
+                            eff_discount = w["discount_offered"]
+                            eff_conf = w["confidence"]
+                            eff_delay = int(w.get("delay_h", 0) * 3600)
+                            disp_winner = w["agent_type"]
+                            disp_stats["wins"][disp_winner] = disp_stats["wins"].get(disp_winner, 0) + 1
+                        else:
+                            # policy blocked (all scores <=0) — visible blocked decision
+                            disp_stats["policy_blocks"] += 1
+                            verdict = "blocked"
+                            block_reason = dr.block_reason or "Policy: all candidates scored \u22640"
+                            rules_triggered = []
+                            dec = CoordinationDecision(
+                                id=f"dec_{uuid.uuid4().hex[:12]}",
+                                action_id=f"act_{uuid.uuid4().hex[:12]}",
+                                customer_id=cid,
+                                verdict=verdict,
+                                block_reason=block_reason,
+                                rules_applied=json.dumps([]),
+                                reasoning=block_reason,
+                                confidence=float(eff_conf or 0.5),
+                                source="simulation",
+                            )
+                            try:
+                                dec.dispatcher_winner = None
+                                dec.dispatcher_candidates = json.dumps(dr.candidates)
+                                dec.trigger_event = trigger_event
+                            except Exception:
+                                pass
+                            self.db.add(dec)
+                            _safe_flush(self.db)
+                            _, _, would = _simulate_customer_response(cust, action_dict, contact_counts[cid] + 1, coordinated=True)
+                            decisions_out.append({"verdict": "blocked", "actual_outcome": "blocked", "actual_revenue": 0, "would_have_converted": would, "block_reason": block_reason})
+                            actions_out.append(action_dict)
+                            continue
+                    except Exception as e:
+                        logger.warning("Sim dispatcher fallback to original agent: %s", e)
+                # Persist winning AgentAction to DB for windowed counting
                 act = AgentAction(
                     id=f"act_{uuid.uuid4().hex[:12]}",
                     agent_id=action_dict["agent_id"],
-                    agent_type=action_dict["agent_type"],
+                    agent_type=eff_agent,
                     customer_id=action_dict["customer_id"],
                     merchant_id=action_dict["merchant_id"],
                     action_type=action_dict["action_type"],
-                    channel=action_dict["channel"],
+                    channel=eff_channel,
                     priority=action_dict["priority"],
                     message_template=action_dict["message_template"],
-                    discount_offered=action_dict["discount_offered"],
+                    discount_offered=eff_discount,
                     amount_involved=action_dict["amount_involved"],
                     proposed_at=action_dict["proposed_at"],
-                    proposed_delay_seconds=action_dict["proposed_delay_seconds"],
-                    confidence=action_dict["confidence"],
-                    reasoning=action_dict["reasoning"],
+                    proposed_delay_seconds=eff_delay,
+                    confidence=eff_conf,
+                    reasoning=f"Sim dispatcher {trigger_event} winner={disp_winner or eff_agent} candidates={len(disp_cands)} — {action_dict['reasoning']}",
                 )
                 self.db.add(act)
-                self.db.flush()
-                # Load customer ORM
-                cust_orm = self.db.query(CustomerContext).filter(CustomerContext.id == cid).first()
+                _safe_flush(self.db)
+                # Load customer ORM (already loaded above; re-use)
                 if not cust_orm:
                     verdict = "blocked"
                     block_reason = "Customer not found"
@@ -394,48 +507,50 @@ class SimulationEngine:
                         verdict = "blocked"
                         block_reason = eval_res.block_reason
                         rules_triggered = eval_res.rules_triggered
+                        disp_stats["governor_blocks"] += 1
                     else:
                         verdict = "approved"
-                        # update ORM state if approved
+                        # update ORM state if approved (use winning channel/agent)
                         cust_orm.last_contact_at = action_dict["proposed_at"]
-                        cust_orm.last_contact_channel = action_dict["channel"]
-                        cust_orm.last_contact_agent = action_dict["agent_type"]
+                        cust_orm.last_contact_channel = eff_channel
+                        cust_orm.last_contact_agent = eff_agent
                         cust_orm.total_contacts_received = (cust_orm.total_contacts_received or 0) + 1
-                        disc = float(action_dict["discount_offered"] or 0)
+                        disc = float(eff_discount or 0)
                         cust_orm.current_discount_exposure = float(cust_orm.current_discount_exposure or 0) + disc
                         self.db.add(cust_orm)
-                        self.db.flush()
-
-                    # Create Decision row for windowed future checks
-                    dec = CoordinationDecision(
-                        id=f"dec_{uuid.uuid4().hex[:12]}",
-                        action_id=act.id,
-                        customer_id=cid,
-                        verdict=verdict,
-                        approved_channel=action_dict["channel"] if verdict == "approved" else None,
-                        approved_delay_seconds=action_dict["proposed_delay_seconds"] if verdict == "approved" else None,
-                        approved_discount=float(action_dict["discount_offered"] or 0) if verdict == "approved" else None,
-                        block_reason=block_reason,
-                        rules_applied=json.dumps(rules_triggered),
-                        reasoning=block_reason or f"Approved via RulesEngine",
-                        confidence=float(action_dict["confidence"] or 0.5),
-                        source="simulation",
-                    )
-                    self.db.add(dec)
-                    self.db.flush()
-                    # Audit entry
-                    aud = AuditEntry(
-                        id=f"aud_{uuid.uuid4().hex[:12]}",
-                        customer_id=cid,
-                        merchant_id=action_dict["merchant_id"],
-                        action_id=act.id,
-                        decision_id=dec.id,
-                        customer_snapshot=json.dumps({"id": cid}),
-                        active_agent_count=1,
-                        rules_evaluated=json.dumps(rules_triggered),
-                    )
-                    self.db.add(aud)
-                    self.db.flush()
+                        _safe_flush(self.db)
+                # reflect winner on the simulated action for metrics (discount affects revenue)
+                action_dict = {**action_dict, "agent_type": eff_agent, "channel": eff_channel, "discount_offered": eff_discount, "confidence": eff_conf, "proposed_delay_seconds": eff_delay}
+                # Create Decision row for windowed future checks
+                dec = CoordinationDecision(
+                    id=f"dec_{uuid.uuid4().hex[:12]}",
+                    action_id=act.id,
+                    customer_id=cid,
+                    verdict=verdict,
+                    approved_channel=action_dict["channel"] if verdict == "approved" else None,
+                    approved_delay_seconds=action_dict["proposed_delay_seconds"] if verdict == "approved" else None,
+                    approved_discount=float(action_dict["discount_offered"] or 0) if verdict == "approved" else None,
+                    block_reason=block_reason,
+                    rules_applied=json.dumps(rules_triggered),
+                    reasoning=block_reason or f"Approved via RulesEngine",
+                    confidence=float(action_dict["confidence"] or 0.5),
+                    source="simulation",
+                )
+                self.db.add(dec)
+                _safe_flush(self.db)
+                # Audit entry
+                aud = AuditEntry(
+                    id=f"aud_{uuid.uuid4().hex[:12]}",
+                    customer_id=cid,
+                    merchant_id=action_dict["merchant_id"],
+                    action_id=act.id,
+                    decision_id=dec.id,
+                    customer_snapshot=json.dumps({"id": cid}),
+                    active_agent_count=1,
+                    rules_evaluated=json.dumps(rules_triggered),
+                )
+                self.db.add(aud)
+                _safe_flush(self.db)
             else:
                 verdict = "approved"
 
@@ -485,7 +600,7 @@ class SimulationEngine:
         # Need to rollback the flush for coordinated scenario? We keep DB state for next seeds clearing, but commit after
         # For this scenario return, we rollback pending transaction if caller wants clean
         # But we already flushed; caller handles clearing
-        return decisions_out, metrics
+        return decisions_out, metrics, disp_stats
 
     def _clear_simulation_state(self, customers: List[dict]):
         # FIX v2: Simulation rows now tagged source="simulation" (see _run_scenario).

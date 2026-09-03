@@ -2,10 +2,11 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 import { Inbox, Brain, Scale, Shield, UserCheck, CheckCircle2, Clock, GitBranch, RefreshCw } from "lucide-react";
-import { safeFixed } from "@/lib/format";
+import { safeFixed, formatISTTime, formatISTDateTime } from "@/lib/format";
+import FullCycleCard from "@/components/FullCycleCard";
 
-interface TimelineNode { type: string; label: string; status: string; detail: string; agent_type?: string; channel?: string; score?: number; ticket_id?: string; decision?: string; override?: boolean; verdict?: string; source?: string; }
-interface ExecutionChain { decision_id: string; customer_id: string; agent_type: string; channel: string; source: string; created_at: string; nodes: TimelineNode[]; }
+interface TimelineNode { type: string; label: string; status: string; detail: string; agent_type?: string; channel?: string; score?: number; ticket_id?: string; decision?: string; override?: boolean; verdict?: string; source?: string; candidates?: any[]; winner?: string | null; }
+interface ExecutionChain { decision_id: string; customer_id: string; agent_type: string; channel: string; source: string; created_at: string; nodes: TimelineNode[]; trigger_event?: string | null; dispatcher_winner?: string | null; dispatcher_candidates?: any[]; message_preview?: string | null; verdict?: string; block_reason?: string | null; }
 
 const STATUS_COLORS: Record<string, string> = {
   completed: "bg-emerald-500", passed: "bg-emerald-500", approved: "bg-emerald-500",
@@ -35,7 +36,7 @@ export default function ExecutionPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="rz-page-title flex items-center gap-2"><GitBranch size={20} className="text-[#0B5CFF]" /> Execution Graph</h1>
-          <p className="rz-page-desc mt-1">Event → Dispatcher → Policy → Guardrail → Outcome • live shared state, auto-refresh 4s</p>
+          <p className="rz-page-desc mt-1">Event → Dispatcher → Policy → Guardrail → Outcome</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <label className="flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-2 bg-white cursor-pointer">
@@ -51,7 +52,7 @@ export default function ExecutionPage() {
         <div className="rz-card p-12 text-center">
           <div className="w-12 h-12 rounded-xl bg-[#F2F4F7] border flex items-center justify-center mx-auto"><GitBranch size={18} className="text-slate-400" /></div>
           <div className="text-sm font-semibold text-slate-700 mt-3">No chains yet</div>
-          <div className="text-xs text-slate-500 mt-1">Create an order or trigger webhook — DAG appears in 2–4s.</div>
+          <div className="text-xs text-slate-500 mt-1">Create an order or send a test event — the graph appears automatically.</div>
         </div>
       )}
 
@@ -69,12 +70,13 @@ export default function ExecutionPage() {
                   <span className="rz-mono bg-white border px-2 py-0.5 rounded-full text-slate-500 hidden sm:inline-flex">{chain.customer_id.slice(0,12)}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-slate-500 shrink-0">
-                  <Clock size={12} /> {chain.created_at ? new Date(chain.created_at).toLocaleTimeString() : "—"}
+                  <Clock size={12} /> <span title={chain.created_at ? formatISTDateTime(chain.created_at) : undefined}>{chain.created_at ? `${formatISTTime(chain.created_at)} IST` : "—"}</span>
                   <span className="rz-pill bg-white border text-slate-500">{chain.source || "—"}</span>
                 </div>
               </div>
 
-              <div className="p-5">
+              <div className="p-5 space-y-4">
+                <FullCycleCard d={{ id: chain.decision_id, customer_id: chain.customer_id, verdict: chain.verdict || last?.status || "approved", block_reason: chain.block_reason, reasoning: last?.detail, source: chain.source, trigger_event: chain.trigger_event, dispatcher_winner: chain.dispatcher_winner, dispatcher: { candidates: chain.dispatcher_candidates || [], winner: chain.dispatcher_winner }, action: { agent_type: chain.agent_type, channel: chain.channel, message_preview: chain.message_preview }, created_at: chain.created_at }} />
                 <div className="relative ml-2">
                   {chain.nodes.map((node, idx) => {
                     const Icon = NODE_ICONS[node.type] || Clock;

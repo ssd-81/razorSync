@@ -55,3 +55,6 @@ Thumbs.db
 # Tunnels
 .ngrok/
 *.ngrok.log
+
+# Local-only notes (credentials, test payment details)
+TESTING.local.md

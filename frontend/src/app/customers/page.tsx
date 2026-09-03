@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { Search, Users, TrendingUp, Shield } from "lucide-react";
+import { Users, TrendingUp, Shield, X } from "lucide-react";
 
 interface Customer {
   id: string;
@@ -31,7 +31,18 @@ export default function CustomersPage() {
   const [list, setList] = useState<Customer[]>([]);
   const [search, setSearch] = useState("");
   useEffect(() => { apiFetch("/api/v1/customers?limit=100").then((r) => setList(r.customers || r.items || r || [])).catch(() => {}); }, []);
-  const filtered = search ? list.filter((c) => `${c.name} ${c.id} ${c.archetype} ${c.city}`.toLowerCase().includes(search.toLowerCase())) : list;
+  const query = search.trim().toLowerCase().replace(/\s+/g, " ");
+  const filtered = query
+    ? list.filter((c) =>
+        // Null-safe per-field match: raw interpolation would inject literal
+        // "undefined"/"null" into the haystack, letting unrelated queries
+        // leak unrelated rows into the results.
+        [c.name ?? "", c.id ?? "", c.archetype ?? "", c.city ?? ""]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      )
+    : list;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -39,10 +50,29 @@ export default function CustomersPage() {
           <h1 className="rz-page-title flex items-center gap-2"><Users size={20} className="text-[#0B5CFF]" /> Customers</h1>
           <p className="rz-page-desc mt-1">{filtered.length} of {list.length} • archetypes, LTV, risk — single merchant scope</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input placeholder="Search id, name, archetype, city" value={search} onChange={(e) => setSearch(e.target.value)} className="rz-input pl-9 w-[300px] h-[40px] text-sm" />
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="relative w-full sm:w-auto">
+            <input
+              type="search"
+              role="searchbox"
+              aria-label="Search customers"
+              placeholder="Search id, name, archetype, city"
+              autoComplete="off"
+              spellCheck={false}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") setSearch(""); }}
+              className="rz-input pr-9 w-full sm:w-[300px] h-[40px] text-sm" />
+            {search && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => setSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -88,7 +118,7 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-4 py-3"><span className={`rz-pill border text-[11px] ${archetypeStyle[c.archetype] || "bg-slate-100 border-slate-200"}`}>{c.archetype?.replaceAll("_"," ")}</span></td>
                   <td className="px-4 py-3 text-slate-600 text-[13px]">{c.city}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-[13px]">{currency(c.lifetime_value)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-[13px]">{c.lifetime_value == null ? "—" : currency(c.lifetime_value)}</td>
                   <td className="px-4 py-3 text-right text-slate-600 text-[13px]">{currency(c.current_discount_exposure)}</td>
                   <td className="px-4 py-3 text-right">
                     <span className="rz-pill bg-slate-900 text-white text-[11px]">{c.total_contacts_received}</span>
