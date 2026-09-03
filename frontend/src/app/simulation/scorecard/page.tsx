@@ -53,17 +53,17 @@ export default function ScorecardPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="rz-page-title flex items-center gap-2"><BarChart3 size={20} className="text-[#0B5CFF]" /> Simulation Scorecard</h1>
-          <p className="rz-page-desc mt-1">Multi-seed • 95% CI whiskers • Welch&apos;s t-test • honest false-positive. <span className="font-medium text-[#0B1020]">Net value</span> is headline P&amp;L.</p>
+          <p className="rz-page-desc mt-1">Multiple seeds with uncertainty bands. <span className="font-medium text-[#0B1020]">Net value</span> is headline P&amp;L.</p>
         </div>
-        <span className="hidden sm:inline-flex rz-pill bg-[#0B5CFF] text-white">v3 • Policy + Guardrail</span>
+        <span className="hidden sm:inline-flex rz-pill bg-[#0B5CFF] text-white">Policy + Guardrail</span>
       </div>
 
       {scorecard && scorecard.meta.num_customers < 200 && (
         <div className="rz-card px-4 py-3 flex items-start gap-3 bg-amber-50 border-amber-200">
           <AlertTriangle size={16} className="text-amber-600 mt-0.5 shrink-0" />
           <div className="flex-1">
-            <div className="text-sm font-semibold text-amber-800">Low statistical power</div>
-            <div className="text-xs text-amber-700 mt-0.5">{scorecard.meta.num_customers} × {scorecard.meta.num_seeds} — CIs wide, p-values unreliable.</div>
+            <div className="text-sm font-semibold text-amber-800">Small run</div>
+            <div className="text-xs text-amber-700 mt-0.5">{scorecard.meta.num_customers} × {scorecard.meta.num_seeds} — wide uncertainty bands at this size.</div>
           </div>
           <button onClick={() => { setNumCustomers(200); setSeeds("42,137,256"); }} className="rz-btn-secondary text-xs h-8">Fix to 200×3 →</button>
         </div>
@@ -74,7 +74,7 @@ export default function ScorecardPage() {
         <div className="flex items-center gap-2 mb-4">
           <span className="w-7 h-7 rounded-lg bg-slate-900 text-white flex items-center justify-center"><FlaskConical size={14} /></span>
           <span className="rz-section-title">Run parameters</span>
-          <span className="ml-auto rz-pill bg-slate-50 border text-slate-500 text-[11px] hidden sm:inline-flex">Engine parity • WAL • 4 workers</span>
+          <span className="ml-auto rz-pill bg-slate-50 border text-slate-500 text-[11px] hidden sm:inline-flex">Same rules as live</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-end">
           <label className="md:col-span-3">
@@ -97,7 +97,7 @@ export default function ScorecardPage() {
           <div className="mt-4 space-y-2">
             <div className="rz-progress-track"><div className="rz-progress-fill" style={{ width: `${progress}%` }} /></div>
             <div className="flex items-center justify-between text-xs text-slate-500">
-              <span className="rz-mono">progress {progress}% • {jobId ? `job ${jobId.slice(0,8)}` : "sync"} • multiprocessed, polling /scorecard/status</span>
+              <span className="rz-mono">progress {progress}% • {progress === 100 ? "done" : "running"}</span>
               <span className="rz-pill bg-slate-50 border text-slate-500">{progress === 100 ? "done" : "running"}</span>
             </div>
           </div>
@@ -112,44 +112,44 @@ export default function ScorecardPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <HeadlineCard
               icon={Wallet} accent="bg-[#0B5CFF] text-white" title="Net Value" sub="Revenue − waste − churn"
-              delta={`${safeFixed(scorecard.net_value.delta_pct.mean,1)}% Δ`} ci={`95% CI [${safeFixed(scorecard.net_value.delta_pct.low,1)}%, ${safeFixed(scorecard.net_value.delta_pct.high,1)}%]`}
-              foot={`${scorecard.revenue.significant ? '✓ p<0.05 significant' : '✗ not significant — noise'} • Uncoord ${safeCurrency(scorecard.net_value.uncoordinated_mean)} → Coord ${safeCurrency(scorecard.net_value.coordinated_mean)}`}
-              extra={`λ=${scorecard.net_value.lambda} LTV at risk`} highlight
+              delta={`${safeFixed(scorecard.net_value.delta_pct.mean,1)}% Δ`} ci={`Range [${safeFixed(scorecard.net_value.delta_pct.low,1)}%, ${safeFixed(scorecard.net_value.delta_pct.high,1)}%]`}
+              foot={`${scorecard.revenue.significant ? '✓ significant' : '✗ within noise'} • Uncoord ${safeCurrency(scorecard.net_value.uncoordinated_mean)} → Coord ${safeCurrency(scorecard.net_value.coordinated_mean)}`}
+              extra={`Assumes ${Math.round(scorecard.net_value.lambda * 100)}% of LTV at risk`} highlight
             />
             <HeadlineCard icon={TrendingUp} accent="bg-emerald-600 text-white" title="Revenue / 1k msgs" sub="Efficiency"
-              delta={`${safeFixed(scorecard.revenue_per_1000.delta_pct.mean,1)}% Δ`} ci={`95% CI [${safeFixed(scorecard.revenue_per_1000.delta_pct.low,1)}%, ${safeFixed(scorecard.revenue_per_1000.delta_pct.high,1)}%]`}
+              delta={`${safeFixed(scorecard.revenue_per_1000.delta_pct.mean,1)}% Δ`} ci={`Range [${safeFixed(scorecard.revenue_per_1000.delta_pct.low,1)}%, ${safeFixed(scorecard.revenue_per_1000.delta_pct.high,1)}%]`}
               foot={`Uncoord ${safeCurrency(scorecard.revenue_per_1000.uncoordinated_mean)} → Coord ${safeCurrency(scorecard.revenue_per_1000.coordinated_mean)}`} extra=""
             />
             <HeadlineCard icon={Shield} accent="bg-red-500 text-white" title="Churn Cost Saved" sub="LTV protected"
-              delta={`${safeCurrency(scorecard.churn_cost.saved)} saved`} ci={`95% CI [${safeInt(scorecard.churn_cost.ci.low)}, ${safeInt(scorecard.churn_cost.ci.high)}]`}
+              delta={`${safeCurrency(scorecard.churn_cost.saved)} saved`} ci={`Range [${safeInt(scorecard.churn_cost.ci.low)}, ${safeInt(scorecard.churn_cost.ci.high)}]`}
               foot={`Uncoord ${safeCurrency(scorecard.churn_cost.uncoordinated_mean)} → Coord ${safeCurrency(scorecard.churn_cost.coordinated_mean)}`} extra=""
             />
             <HeadlineCard icon={AlertTriangle} accent="bg-amber-500 text-white" title="False Positive" sub="Blocked that would convert"
-              delta={`${safeFixed(scorecard.false_positive.mean * 100,1)}%`} ci={`95% CI [${safeFixed(scorecard.false_positive.ci.low * 100,1)}%, ${safeFixed(scorecard.false_positive.ci.high * 100,1)}%]`}
+              delta={`${safeFixed(scorecard.false_positive.mean * 100,1)}%`} ci={`Range [${safeFixed(scorecard.false_positive.ci.low * 100,1)}%, ${safeFixed(scorecard.false_positive.ci.high * 100,1)}%]`}
               foot={scorecard.false_positive.note} extra=""
             />
           </div>
 
           {/* Secondary 4 */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <SmallCard title="Revenue / Contact" sub="Efficiency" delta={`${safeFixed(scorecard.revenue_per_contact.delta_pct.mean,1)}% Δ`} ci={`CI [${safeFixed(scorecard.revenue_per_contact.delta_pct.low,1)}%, ${safeFixed(scorecard.revenue_per_contact.delta_pct.high,1)}%]`} />
-            <SmallCard title="Discount Waste Saved" delta={`${safeCurrency(scorecard.discount_waste.saved)}`} ci={`CI [${safeInt(scorecard.discount_waste.ci.low)}, ${safeInt(scorecard.discount_waste.ci.high)}]`} />
-            <SmallCard title="Churn Reduction" delta={`${safeFixed(scorecard.churn.reduction_pct.mean,1)}% Δ`} ci={`CI [${safeFixed(scorecard.churn.reduction_pct.low,1)}%, ${safeFixed(scorecard.churn.reduction_pct.high,1)}%]`} />
-            <SmallCard title="Total Revenue" sub="7-day raw" delta={`${safeFixed(scorecard.revenue.delta_pct.mean,1)}% Δ`} ci={`p=${safeFixed(scorecard.revenue.p_value,3)} ${scorecard.revenue.significant ? '✓' : '✗'}`} />
+            <SmallCard title="Revenue / Contact" sub="Efficiency" delta={`${safeFixed(scorecard.revenue_per_contact.delta_pct.mean,1)}% Δ`} ci={`Range [${safeFixed(scorecard.revenue_per_contact.delta_pct.low,1)}%, ${safeFixed(scorecard.revenue_per_contact.delta_pct.high,1)}%]`} />
+            <SmallCard title="Discount Waste Saved" delta={`${safeCurrency(scorecard.discount_waste.saved)}`} ci={`Range [${safeInt(scorecard.discount_waste.ci.low)}, ${safeInt(scorecard.discount_waste.ci.high)}]`} />
+            <SmallCard title="Churn Reduction" delta={`${safeFixed(scorecard.churn.reduction_pct.mean,1)}% Δ`} ci={`Range [${safeFixed(scorecard.churn.reduction_pct.low,1)}%, ${safeFixed(scorecard.churn.reduction_pct.high,1)}%]`} />
+            <SmallCard title="Total Revenue" sub="7-day raw" delta={`${safeFixed(scorecard.revenue.delta_pct.mean,1)}% Δ`} ci={scorecard.revenue.significant ? '✓ significant' : '✗ within noise'} />
           </div>
 
           {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <ChartCard title="Net Value" sub="With 95% CI band • headline P&L" data={scorecard.charts.net_value} colors={['#94A3B8', '#0B5CFF']} formatter={(v: number) => safeCurrency(v)} />
+            <ChartCard title="Net Value" sub="With uncertainty band • headline P&L" data={scorecard.charts.net_value} colors={['#94A3B8', '#0B5CFF']} formatter={(v: number) => safeCurrency(v)} />
             <ChartCard title="Contact Volume" sub="Fewer contacts, same intent" data={scorecard.charts.contacts} colors={['#94A3B8', '#0EA5E9']} formatter={(v: number) => safeInt(v)} />
-            <ChartCard title="Churn Cost" sub="Σ(LTV × 0.30) churned" data={scorecard.charts.churn_cost} colors={['#FCA5A5', '#EF4444']} formatter={(v: number) => safeCurrency(v)} />
+            <ChartCard title="Churn Cost" sub="Cost of lost customers" data={scorecard.charts.churn_cost} colors={['#FCA5A5', '#EF4444']} formatter={(v: number) => safeCurrency(v)} />
           </div>
 
           <div className="rz-card overflow-hidden">
             <div className="px-5 py-3 border-b bg-[#F9FAFB] flex items-center gap-2">
               <span className="w-7 h-7 rounded-lg bg-white border flex items-center justify-center"><Users size={12} className="text-slate-500" /></span>
               <span className="rz-section-title">Per-seed Raw</span>
-              <span className="ml-auto rz-pill bg-white border text-slate-500">{scorecard.meta.num_seeds} seeds • honest</span>
+              <span className="ml-auto rz-pill bg-white border text-slate-500">{scorecard.meta.num_seeds} seeds</span>
             </div>
             <details className="px-5 py-4">
               <summary className="text-sm font-semibold cursor-pointer text-[#0B5CFF] hover:underline">Show JSON — all seeds, uncoordinated vs coordinated</summary>

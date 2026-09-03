@@ -35,7 +35,7 @@ export default function ExecutionPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="rz-page-title flex items-center gap-2"><GitBranch size={20} className="text-[#0B5CFF]" /> Execution Graph</h1>
-          <p className="rz-page-desc mt-1">Event → Dispatcher → Policy → Guardrail → Outcome • live shared state, auto-refresh 4s</p>
+          <p className="rz-page-desc mt-1">Event → Dispatcher → Policy → Guardrail → Outcome</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <label className="flex items-center gap-2 text-xs font-medium border rounded-full px-3 py-2 bg-white cursor-pointer">
@@ -51,7 +51,7 @@ export default function ExecutionPage() {
         <div className="rz-card p-12 text-center">
           <div className="w-12 h-12 rounded-xl bg-[#F2F4F7] border flex items-center justify-center mx-auto"><GitBranch size={18} className="text-slate-400" /></div>
           <div className="text-sm font-semibold text-slate-700 mt-3">No chains yet</div>
-          <div className="text-xs text-slate-500 mt-1">Create an order or trigger webhook — DAG appears in 2–4s.</div>
+          <div className="text-xs text-slate-500 mt-1">Create an order or send a test event — the graph appears automatically.</div>
         </div>
       )}
 

@@ -73,12 +73,7 @@ export default function Sidebar() {
 
       <div className="px-4 py-4 border-t border-white/[0.07] space-y-3">
         <div className="flex items-center gap-2 text-[11px] font-medium text-slate-300">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" /> Live • Razorpay Test
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="rz-pill bg-white/10 text-slate-300 border border-white/10 text-[10px]">Polling 2s</span>
-          <span className="rz-pill bg-white/10 text-slate-300 border border-white/10 text-[10px]">95% CI</span>
-          <span className="rz-pill bg-white/10 text-slate-300 border border-white/10 text-[10px]">WAL</span>
+          <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" /> Live
         </div>
       </div>
     </aside>

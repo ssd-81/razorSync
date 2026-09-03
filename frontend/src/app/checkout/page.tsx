@@ -127,7 +127,7 @@ export default function CheckoutPage() {
     <div className="space-y-6 max-w-[640px] mx-auto">
       <div>
         <h1 className="rz-page-title flex items-center gap-2"><CreditCard size={20} className="text-[#0B5CFF]" /> Live Checkout</h1>
-        <p className="rz-page-desc mt-1">Razorpay Test Mode — <span className="font-medium text-emerald-700">UPI recommended</span> (<span className="rz-mono bg-white border px-1.5 py-0.5 rounded">success@razorpay</span>) or card. Webhook fires live.</p>
+        <p className="rz-page-desc mt-1">UPI recommended (<span className="rz-mono bg-white border px-1.5 py-0.5 rounded">success@razorpay</span>) or card.</p>
       </div>
 
       {/* Stepper — Razorpay style */}

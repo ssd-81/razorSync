@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "@/lib/api";
-import { MessageCircle, Smartphone, Mail, Bell, MonitorSmartphone, Check, X, Clock, AlertTriangle, Zap, Activity, Cpu, Database } from "lucide-react";
+import { MessageCircle, Smartphone, Mail, Bell, MonitorSmartphone, Check, X, Clock, AlertTriangle, Zap, Activity, Cpu } from "lucide-react";
 import { safeFixed } from "@/lib/format";
 
 interface Decision {
@@ -135,15 +135,14 @@ export default function OpsPage() {
         <div>
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
-            <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase">Live • Test Mode</span>
-            <span className="rz-pill bg-slate-900 text-white">merchant_default</span>
+            <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase">Live</span>
           </div>
           <h1 className="rz-page-title mt-2">Razorpay Coordination Console</h1>
-          <p className="rz-page-desc mt-1 max-w-2xl">Real Razorpay <code className="rz-mono bg-white border px-1.5 py-0.5 rounded">order.create</code> → verified webhook → <span className="font-medium text-slate-700">Dispatcher</span> scores → <span className="font-medium text-slate-700">Governor</span> vetoes → audit. Queued <b>&lt;150ms</b>, reasoning async.</p>
+          <p className="rz-page-desc mt-1 max-w-2xl">Create a real order → verified webhook → <span className="font-medium text-slate-700">Dispatcher</span> scores → <span className="font-medium text-slate-700">Governor</span> decides → audit. Fast acknowledgement, background reasoning.</p>
         </div>
         <div className="hidden md:flex items-center gap-2">
-          <span className={`rz-pill border ${llm?.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{llm?.enabled ? llm.model : "Deterministic"}</span>
-          <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Failure ON" : "Operational"}</span>
+          <span className={`rz-pill border ${llm?.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{llm?.enabled ? llm.model : "Built-in"}</span>
+          <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Drill on" : "Live"}</span>
         </div>
       </div>
 
@@ -153,9 +152,8 @@ export default function OpsPage() {
       <div className="rz-card p-5">
         <div className="flex items-center gap-2 mb-4">
           <span className="w-7 h-7 rounded-full bg-[#0B5CFF] text-white flex items-center justify-center"><Zap size={14} /></span>
-          <h2 className="font-semibold text-sm">Create Test Order</h2>
-          <span className="text-xs text-slate-400">Razorpay Test API • {amount*100} paise</span>
-          <span className="ml-auto flex items-center gap-1 text-xs text-slate-500"><Database size={12} /> WAL</span>
+          <h2 className="font-semibold text-sm">Create Order</h2>
+          <span className="text-xs text-slate-400">₹{amount}</span>
         </div>
         <div className="flex flex-wrap gap-3 items-end">
           <label className="flex flex-col gap-1.5">
@@ -169,7 +167,7 @@ export default function OpsPage() {
             <input type="number" value={amount} onChange={(e)=>setAmount(Number(e.target.value))} className="rz-input w-28" />
           </label>
           <button onClick={createOrder} disabled={loadingOrder} className="rz-btn-primary">{loadingOrder?"Creating…":"Create Order"}</button>
-          <button onClick={createWebhookSample} className="rz-btn-secondary"><Activity size={14} /> Trigger Webhook</button>
+          <button onClick={createWebhookSample} className="rz-btn-secondary"><Activity size={14} /> Send test event</button>
         </div>
         {orderResult && (
           <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
@@ -186,7 +184,7 @@ export default function OpsPage() {
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-full bg-slate-900 text-white flex items-center justify-center"><Cpu size={14} /></span>
             <h2 className="font-semibold text-sm">Agents</h2>
-            <span className="text-xs text-slate-400">from agents/config.yaml • {agents ? Object.keys(agents.agents || agents).length : "—"} configured</span>
+            <span className="text-xs text-slate-500">from {agents ? Object.keys(agents.agents || agents).length : "—"} configured agents</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
             {agents ? Object.entries(agents.agents || agents).slice(0,4).map(([k,v]:any)=> {
@@ -222,16 +220,16 @@ export default function OpsPage() {
             <div className="mt-3 space-y-2.5">
               <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border"><span className="text-xs text-slate-500">Provider</span><span className="rz-pill bg-slate-900 text-white">{llm?.provider || "—"}</span></div>
               <div className="p-2.5 rounded-lg bg-slate-50 border"><div className="text-[11px] uppercase tracking-wide text-slate-500">Model</div><div className="rz-mono font-medium mt-1 truncate">{llm?.model || "—"}</div><div className={`rz-pill mt-2 inline-flex ${llm?.enabled?"bg-violet-600 text-white":"bg-white border text-slate-600"}`}>{llm?.enabled?"enabled":"deterministic"}</div></div>
-              <div className="text-[11px] leading-relaxed text-slate-500 bg-violet-50 border border-violet-100 rounded-lg p-2.5">Switch via <code className="rz-mono bg-white px-1 py-0.5 rounded border">.env LLM_ENDPOINT/MODEL/API_KEY</code>. Empty → fallback.</div>
+              <div className="text-[11px] leading-relaxed text-slate-500 bg-violet-50 border border-violet-100 rounded-lg p-2.5">Set a provider in the backend environment, or leave it unset for built-in reasoning.</div>
             </div>
           </div>
           <div className="rz-card p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold flex items-center gap-1.5"><Clock size={14} /> Queue</span>
-              <span className="text-[11px] text-slate-400">razor:inbox + DB</span>
+              <span className="text-[11px] text-slate-400">Recent events</span>
             </div>
             <div className="mt-3 space-y-1.5 max-h-[160px] overflow-auto pr-1">
-              {inbox.length===0? <div className="text-xs text-slate-400 py-6 text-center border border-dashed rounded-lg">No webhooks yet</div> : inbox.slice(0,5).map((i)=>(
+              {inbox.length===0? <div className="text-xs text-slate-400 py-6 text-center border border-dashed rounded-lg">No events yet</div> : inbox.slice(0,5).map((i)=>(
                 <div key={i.id} className="flex items-center gap-2 p-2 rounded-lg border bg-white text-xs">
                   <span className={`h-1.5 w-1.5 rounded-full ${i.status==="completed"?"bg-emerald-500":"bg-amber-500"}`} />
                   <span className="rz-mono flex-1 truncate">{i.event}</span>
@@ -241,8 +239,8 @@ export default function OpsPage() {
             </div>
           </div>
           <div className="rz-card px-4 py-3 flex items-center justify-between">
-            <span className="text-xs font-semibold flex items-center gap-1.5"><AlertTriangle size={14} className="text-amber-500" /> Razorpay Failure</span>
-            <button onClick={toggleFailure} className={`rz-pill border text-xs font-bold h-7 px-3 ${failure?"bg-amber-500 text-white border-amber-500":"bg-[#0B1020] text-white border-[#0B1020]"}`}>{failure?"ON — fallback":"OFF — live"}</button>
+            <span className="text-xs font-semibold flex items-center gap-1.5"><AlertTriangle size={14} className="text-amber-500" /> Outage drill</span>
+            <button onClick={toggleFailure} className={`rz-pill border text-xs font-bold h-7 px-3 ${failure?"bg-amber-500 text-white border-amber-500":"bg-[#0B1020] text-white border-[#0B1020]"}`}>{failure?"On":"Off"}</button>
           </div>
         </div>
       </div>
@@ -251,9 +249,9 @@ export default function OpsPage() {
         <div className="flex items-center gap-2 mb-4">
           <span className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center"><Check size={14} /></span>
           <h2 className="font-semibold text-sm">Decision Chain</h2>
-          <span className="text-xs text-slate-400">polling 2s • {decisions.length} total</span>
+          <span className="text-xs text-slate-400">{decisions.length} decisions</span>
         </div>
-        {decisions.length===0 ? <div className="text-sm text-slate-400 py-8 text-center border border-dashed rounded-xl">Create an order or trigger webhook</div> : (
+        {decisions.length===0 ? <div className="text-sm text-slate-400 py-8 text-center border border-dashed rounded-xl">Create an order or send a test event</div> : (
           <div className="relative ml-4">
             <div className="timeline-line" />
             <div className="space-y-3">
