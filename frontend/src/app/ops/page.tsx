@@ -30,12 +30,6 @@ const AGENT_META: Record<string, { label: string; dot: string }> = {
   x_payout_growth: { label: "X Payout", dot: "bg-violet-500" },
 };
 
-function StepBadge({ n }: { n: number }) {
-  return (
-    <span className="w-7 h-7 rounded-full bg-[#0B5CFF] text-white flex items-center justify-center text-[13px] font-bold shrink-0">{n}</span>
-  );
-}
-
 export default function OpsPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState("");
@@ -139,8 +133,8 @@ export default function OpsPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="rz-page-title mt-2">Razorpay Coordination Console</h1>
-          <p className="rz-page-desc mt-1 max-w-2xl">Trigger coordination, follow each verdict, and see why the winning agent was picked.</p>
+          <h1 className="rz-page-title mt-2">Operations</h1>
+          <p className="rz-page-desc mt-1 max-w-2xl">Create orders, review every verdict, and inspect how each one was scored.</p>
         </div>
         <div className="hidden md:flex items-center gap-2">
           <span className={`rz-pill border ${!llm ? "bg-white text-slate-400" : llm.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{!llm ? "…" : llm.enabled ? llm.model : "Built-in"}</span>
@@ -151,15 +145,11 @@ export default function OpsPage() {
       {banner && <div className="rz-card px-4 py-3 text-sm flex gap-2.5 items-center bg-amber-50 border-amber-200 text-amber-800"><AlertTriangle size={16} className="shrink-0" />{banner}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        {/* Main story column */}
+        {/* Main column */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Step 1 */}
           <div className="rz-card p-5">
-            <div className="flex items-center gap-2.5 mb-1">
-              <StepBadge n={1} />
-              <h2 className="font-semibold text-sm">Trigger coordination</h2>
-            </div>
-            <p className="text-xs text-slate-500 ml-[38px] mb-4">An order starts the whole chain — create one, or send a ready-made event.</p>
+            <h2 className="font-semibold text-sm">Create order</h2>
+            <p className="text-xs text-slate-500 mt-1 mb-4">An order starts the whole chain — create one, or send a ready-made event.</p>
             <div className="flex flex-wrap gap-3 items-end">
               <label className="flex flex-col gap-1.5">
                 <span className="rz-label">Customer</span>
@@ -184,14 +174,12 @@ export default function OpsPage() {
             )}
           </div>
 
-          {/* Step 2 */}
           <div className="rz-card p-5">
-            <div className="flex items-center gap-2.5 mb-1">
-              <StepBadge n={2} />
-              <h2 className="font-semibold text-sm">Follow the verdict</h2>
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="font-semibold text-sm">Decisions</h2>
               <span className="ml-auto text-xs text-slate-400">{decisions.length} decisions</span>
             </div>
-            <p className="text-xs text-slate-500 ml-[38px] mb-4">Every verdict lands here with the reason attached — newest at the bottom.</p>
+            <p className="text-xs text-slate-500 mt-1 mb-4">Every verdict lands here with the reason attached — newest at the bottom.</p>
             {decisions.length===0 ? <div className="text-sm text-slate-400 py-8 text-center border border-dashed rounded-xl">Nothing yet — complete step 1 above</div> : (
               <div className="relative ml-4">
                 <div className="timeline-line" />
@@ -219,13 +207,9 @@ export default function OpsPage() {
             )}
           </div>
 
-          {/* Step 3 */}
           <div className="rz-card p-5">
-            <div className="flex items-center gap-2.5 mb-1">
-              <StepBadge n={3} />
-              <h2 className="font-semibold text-sm">See why this agent won</h2>
-            </div>
-            <p className="text-xs text-slate-500 ml-[38px] mb-4">Each contender is scored on revenue, churn risk, and cost — the winner runs unless a guardrail vetoes it.</p>
+            <h2 className="font-semibold text-sm">Agents and scoring</h2>
+            <p className="text-xs text-slate-500 mt-1 mb-4">Each contender is scored on revenue, churn risk, and cost — the winner runs unless a guardrail vetoes it.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {agents ? Object.entries(agents.agents || agents).slice(0,4).map(([k,v]:any)=> {
                 const chs = (v as any).channels||[];
