@@ -126,15 +126,29 @@ LLM_API_KEY=
 
 ## 6. Architecture
 
-```text
-Dashboard --POST /orders--> Razorpay API (test) --webhook--> /webhook/razorpay (verify)
-                                                                              |
-                                                     Redis Stream + DB inbox (fast ack)
-                                                                              |
-                                              Reasoning worker: guardrails → rules → dispatcher → LLM note
-                                                                              |
-                                                     Audit + Decision --poll--> Dashboard
-                                                                              `--> Scorecard (multi-seed, CI, p-value)
+```mermaid
+flowchart TB
+    dash["Dashboard (Next.js)"]
+    orders["POST /orders"]
+    api["Razorpay API (test mode)"]
+    hook["Razorpay webhooks"]
+    verify["Verify HMAC signature"]
+    inbox["Redis Stream + DB inbox"]
+    worker["Reasoning worker"]
+    pipe["Guardrails → Rules → Dispatcher"]
+    store[("SQLite WAL\ndecisions + audit")]
+    score["Scorecard (multi-seed, CI, p-value)"]
+
+    dash -->|"1. create order"| orders
+    orders -->|"2. order.create"| api
+    api -->|"3. payment events"| hook
+    hook -->|"4. POST /webhook/razorpay"| verify
+    verify -->|"5. ack, enqueue"| inbox
+    inbox -->|"6. drain"| worker
+    worker --> pipe
+    pipe -->|"7. verdict + reasoning"| store
+    store -->|"8. poll /decisions/recent (2s)"| dash
+    score -.->|"same RulesEngine"| pipe
 ```
 
 - **Windowed rules:** `frequency_cap`, `cooldown`, `escalation_ceiling` count `proposed_at >= now - window`; `budget_limit` is cumulative; `time_window` is IST (`Asia/Kolkata`).
