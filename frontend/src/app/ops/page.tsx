@@ -143,7 +143,7 @@ export default function OpsPage() {
           <p className="rz-page-desc mt-1 max-w-2xl">Four steps, top to bottom: trigger coordination, follow the verdict, see why this agent won, then break the provider on purpose.</p>
         </div>
         <div className="hidden md:flex items-center gap-2">
-          <span className={`rz-pill border ${llm?.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{llm?.enabled ? llm.model : "Built-in"}</span>
+          <span className={`rz-pill border ${!llm ? "bg-white text-slate-400" : llm.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{!llm ? "…" : llm.enabled ? llm.model : "Built-in"}</span>
           <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Drill on" : "Normal"}</span>
         </div>
       </div>
@@ -159,7 +159,7 @@ export default function OpsPage() {
               <StepBadge n={1} />
               <h2 className="font-semibold text-sm">Trigger coordination</h2>
             </div>
-            <p className="text-xs text-slate-500 ml-[38px] mb-4">An order starts the whole chain — create one, or inject a raw event.</p>
+            <p className="text-xs text-slate-500 ml-[38px] mb-4">An order starts the whole chain — create one, or send a ready-made event.</p>
             <div className="flex flex-wrap gap-3 items-end">
               <label className="flex flex-col gap-1.5">
                 <span className="rz-label">Customer</span>
@@ -238,7 +238,7 @@ export default function OpsPage() {
                   </div>
                   <div className="text-[11px] text-slate-400 mt-2">trigger <code className="rz-mono bg-slate-50 px-1 py-0.5 rounded">{(v as any).trigger}</code></div>
                 </div>
-              )}) : <div className="text-xs text-slate-400">Loading…</div>}
+              )}) : <div className="text-xs text-slate-400">Loading agents…</div>}
             </div>
             {dispatcher && (
               <div className="mt-4 border rounded-xl p-3 bg-blue-50/50 border-blue-200">
