@@ -53,7 +53,7 @@ export default function CheckoutPage() {
       setWebhookStatus(`Waiting for webhook… (${i + 1}/30)`);
     }
     setError("Webhook not received within 60s — Razorpay may not have fired (check Dashboard → Settings → Webhooks → Logs), or tunnel URL rotated. Fix: re-check https://<your-tunnel>/health via tunnel, re-register webhook URL, and try again. Recent payment was still captured — check Audit trail for last decision or retry checkout.");
-    setWebhookStatus("Timed out — no live decision for this customer yet.");
+    setWebhookStatus("Timed out — no decision for this customer yet.");
     setStep("form"); // allow retry — was stuck on waiting with no error before fix
   }, []);
 
@@ -95,12 +95,7 @@ export default function CheckoutPage() {
       rzp.on("payment.failed", function (response: any) {
         setStep("form"); setLoading(false);
         const desc: string = response.error?.description || "Unknown error";
-        const isIntl = desc.toLowerCase().includes("international");
-        if (isIntl) {
-          setError(`Card flagged as international. Fix: Razorpay Dashboard → Settings → Payment Configuration → Enable International Cards (test mode). Or use UPI "success@razorpay" — it always succeeds. Details: ${desc}`);
-        } else {
-          setError(`Payment failed: ${desc}`);
-        }
+        setError(`Payment failed: ${desc}`);
       });
       rzp.open();
     } catch (e: any) { setStep("form"); setError(String(e)); } finally { setLoading(false); }
@@ -126,8 +121,8 @@ export default function CheckoutPage() {
   return (
     <div className="space-y-6 max-w-[640px] mx-auto">
       <div>
-        <h1 className="rz-page-title flex items-center gap-2"><CreditCard size={20} className="text-[#0B5CFF]" /> Live Checkout</h1>
-        <p className="rz-page-desc mt-1">UPI recommended (<span className="rz-mono bg-white border px-1.5 py-0.5 rounded">success@razorpay</span>) or card.</p>
+        <h1 className="rz-page-title flex items-center gap-2"><CreditCard size={20} className="text-[#0B5CFF]" /> Checkout</h1>
+        <p className="rz-page-desc mt-1">Complete a payment to trigger coordination.</p>
       </div>
 
       {/* Stepper — Razorpay style */}
@@ -155,8 +150,8 @@ export default function CheckoutPage() {
         <div className="rz-card p-6 space-y-4">
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-lg bg-[#0B5CFF] text-white flex items-center justify-center"><CreditCard size={14} /></span>
-            <h2 className="rz-section-title">Create Test Payment</h2>
-            <span className="ml-auto rz-pill bg-slate-50 border text-slate-500">Test mode • INR</span>
+            <h2 className="rz-section-title">Create Payment</h2>
+            <span className="ml-auto rz-pill bg-slate-50 border text-slate-500">INR</span>
           </div>
           <div className="space-y-3">
             <label>
@@ -173,27 +168,6 @@ export default function CheckoutPage() {
           <button onClick={handlePayment} disabled={loading || !selectedCustomer || !razorpayLoaded} className="w-full rz-btn-primary py-3 text-[14px]">
             {!razorpayLoaded ? <><Loader2 size={14} className="animate-spin" /> Loading Razorpay…</> : `Pay ₹${amount} →`}
           </button>
-          <div className="rounded-xl bg-[#F9FAFB] border p-3 space-y-2">
-            <div className="text-xs font-semibold text-slate-700">Test payments — popup shows only enabled methods</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-              <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-2.5">
-                <div className="font-semibold text-emerald-800">UPI</div>
-                <div className="rz-mono mt-1 text-emerald-700">success@razorpay</div>
-                <div className="text-slate-500 mt-1">If not in popup: enable in Dashboard → Payment Methods → UPI (test)</div>
-              </div>
-              <div className="rounded-lg bg-white border p-2.5">
-                <div className="font-semibold text-slate-700">Card</div>
-                <div className="rz-mono mt-1">5267 3181 8797 5449</div>
-                <div className="text-slate-500 mt-1">If “international not supported” → enable International Cards in Dashboard</div>
-              </div>
-              <div className="rounded-lg bg-white border p-2.5">
-                <div className="font-semibold text-slate-700">Netbanking</div>
-                <div className="text-slate-600 mt-1">Any bank → Success</div>
-                <div className="text-slate-500 mt-1">If missing: enable Netbanking in Dashboard</div>
-              </div>
-            </div>
-            <div className="text-[11px] text-slate-500 leading-relaxed">Your popup shows <b>only Cards</b> because UPI/Netbanking are disabled for <span className="rz-mono bg-white border px-1 rounded">rzp_test_XXXX</span> (your test Key ID) → Razorpay Dashboard (Test Mode) → Settings → Payment Methods → toggle UPI + Netbanking + Wallet ON. Config above now requests all blocks so they appear once enabled.</div>
-          </div>
         </div>
       )}
 
@@ -205,7 +179,7 @@ export default function CheckoutPage() {
           <div className="text-[16px] font-semibold">{step === "paying" ? "Complete payment in Razorpay" : "Waiting for webhook…"}</div>
           <div className="text-sm text-slate-500">{webhookStatus || "Processing…"}</div>
           {orderResult && <div className="rz-mono bg-[#F9FAFB] border rounded-xl px-3 py-2 text-slate-500">Order {orderResult.order_id} {orderResult.payment_id ? `• Payment ${orderResult.payment_id}` : ""}</div>}
-          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400"><Clock size={12} /> Webhook via ngrok • up to 30s</div>
+          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400"><Clock size={12} /> Confirming payment • up to 30s</div>
         </div>
       )}
 

@@ -133,16 +133,12 @@ export default function OpsPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
-            <span className="text-[11px] font-semibold tracking-widest text-slate-500 uppercase">Live</span>
-          </div>
           <h1 className="rz-page-title mt-2">Razorpay Coordination Console</h1>
           <p className="rz-page-desc mt-1 max-w-2xl">Create a real order → verified webhook → <span className="font-medium text-slate-700">Dispatcher</span> scores → <span className="font-medium text-slate-700">Governor</span> decides → audit. Fast acknowledgement, background reasoning.</p>
         </div>
         <div className="hidden md:flex items-center gap-2">
           <span className={`rz-pill border ${llm?.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{llm?.enabled ? llm.model : "Built-in"}</span>
-          <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Drill on" : "Live"}</span>
+          <span className={`rz-pill border ${failure ? "bg-amber-500 text-white border-amber-500" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{failure ? "Drill on" : "Normal"}</span>
         </div>
       </div>
 

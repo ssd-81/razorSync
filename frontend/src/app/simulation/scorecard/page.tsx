@@ -74,7 +74,7 @@ export default function ScorecardPage() {
         <div className="flex items-center gap-2 mb-4">
           <span className="w-7 h-7 rounded-lg bg-slate-900 text-white flex items-center justify-center"><FlaskConical size={14} /></span>
           <span className="rz-section-title">Run parameters</span>
-          <span className="ml-auto rz-pill bg-slate-50 border text-slate-500 text-[11px] hidden sm:inline-flex">Same rules as live</span>
+          <span className="ml-auto rz-pill bg-slate-50 border text-slate-500 text-[11px] hidden sm:inline-flex">Same rules apply</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-end">
           <label className="md:col-span-3">
