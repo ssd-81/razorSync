@@ -37,6 +37,7 @@ def list_customers(
                 "archetype": c.archetype,
                 "risk_score": c.risk_score,
                 "engagement_score": c.engagement_score,
+                "lifetime_value": c.lifetime_value,
                 "total_contacts_received": c.total_contacts_received,
                 "current_discount_exposure": c.current_discount_exposure,
                 "churned": c.churned,
