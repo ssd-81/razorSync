@@ -29,10 +29,16 @@ const groups = [
   },
 ];
 
+const allHrefs = groups.flatMap((g) => g.items.map((i) => i.href));
+
 export default function Sidebar() {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    pathname === href || (href !== "/" && pathname?.startsWith(href));
+  // Longest-prefix match wins, so nested routes (e.g. /simulation/scorecard)
+  // highlight exactly one entry instead of every ancestor.
+  const activeHref = allHrefs
+    .filter((h) => pathname === h || (h !== "/" && pathname?.startsWith(h + "/")))
+    .sort((a, b) => b.length - a.length)[0];
+  const isActive = (href: string) => href === activeHref;
 
   return (
     <aside className="w-[240px] bg-[#0B1020] text-white flex flex-col shrink-0 border-r border-white/[0.06] sticky top-0 h-screen">
