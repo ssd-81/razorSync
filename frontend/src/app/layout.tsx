@@ -1,17 +1,15 @@
 import "./globals.css";
+import { Inter } from "next/font/google";
 import Sidebar from "@/components/Sidebar";
 
-export const metadata = { title: "RazorSync v3 — Coordination Engine", description: "Cross-agent coordination for Razorpay Agent Studio — v3 with live Razorpay + statistical rigor" };
+const inter = Inter({ subsets: ["latin"], display: "swap" });
+
+export const metadata = { title: "RazorSync — Coordination Engine", description: "Coordination layer for customer touchpoints: policy scoring, windowed rules, and human review." };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      </head>
-      <body className="min-h-screen bg-[#F6F8FA] text-slate-900 antialiased" style={{ fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+      <body className={`min-h-screen bg-[#F6F8FA] text-slate-900 antialiased ${inter.className}`}>
         <div className="flex min-h-screen">
           <Sidebar />
           <main className="flex-1 min-w-0 bg-[#F6F8FA]">
