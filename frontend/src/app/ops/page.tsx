@@ -140,7 +140,7 @@ export default function OpsPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="rz-page-title mt-2">Razorpay Coordination Console</h1>
-          <p className="rz-page-desc mt-1 max-w-2xl">Four steps, top to bottom: trigger coordination, follow the verdict, see why this agent won, then break the provider on purpose.</p>
+          <p className="rz-page-desc mt-1 max-w-2xl">Trigger coordination, follow each verdict, and see why the winning agent was picked.</p>
         </div>
         <div className="hidden md:flex items-center gap-2">
           <span className={`rz-pill border ${!llm ? "bg-white text-slate-400" : llm.enabled ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600"}`}>{!llm ? "…" : llm.enabled ? llm.model : "Built-in"}</span>
@@ -255,28 +255,20 @@ export default function OpsPage() {
             )}
           </div>
 
-          {/* Step 4 */}
-          <div className="rz-card p-5">
-            <div className="flex items-center gap-2.5 mb-1">
-              <StepBadge n={4} />
-              <h2 className="font-semibold text-sm">Break the provider on purpose</h2>
-            </div>
-            <p className="text-xs text-slate-500 ml-[38px] mb-4">Flip the switch, create another order in step 1, and watch the fallback path: cached decision, amber banner, audit entry.</p>
-            <div className="flex items-center justify-between rounded-xl border bg-white px-4 py-3">
-              <span className="text-xs font-semibold flex items-center gap-1.5"><AlertTriangle size={14} className="text-amber-500" /> Outage drill</span>
-              <button onClick={toggleFailure} className={`rz-pill border text-xs font-bold h-7 px-3 ${failure?"bg-amber-500 text-white border-amber-500":"bg-[#0B1020] text-white border-[#0B1020]"}`}>{failure?"On":"Off"}</button>
-            </div>
-          </div>
         </div>
 
         {/* Side rail: system state */}
         <div className="space-y-4">
           <div className="rz-card p-5">
-            <h2 className="font-semibold text-sm flex items-center gap-2"><Cpu size={14} className="text-violet-600" /> Reasoning</h2>
+            <h2 className="font-semibold text-sm flex items-center gap-2"><Cpu size={14} className="text-violet-600" /> System</h2>
             <div className="mt-3 space-y-2.5">
               <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border"><span className="text-xs text-slate-500">Provider</span><span className="rz-pill bg-slate-900 text-white">{llm?.provider || "—"}</span></div>
               <div className="p-2.5 rounded-lg bg-slate-50 border"><div className="text-[11px] uppercase tracking-wide text-slate-500">Model</div><div className="rz-mono font-medium mt-1 truncate">{llm?.model || "—"}</div><div className={`rz-pill mt-2 inline-flex ${llm?.enabled?"bg-violet-600 text-white":"bg-white border text-slate-600"}`}>{llm?.enabled?"enabled":"built-in"}</div></div>
-              <div className="text-[11px] leading-relaxed text-slate-500 bg-violet-50 border border-violet-100 rounded-lg p-2.5">Set a provider in the backend environment, or leave it unset for built-in reasoning.</div>
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border">
+                <span className="text-xs text-slate-500">Outage drill</span>
+                <button onClick={toggleFailure} className={`rz-pill border text-xs font-bold h-7 px-3 ${failure?"bg-amber-500 text-white border-amber-500":"bg-[#0B1020] text-white border-[#0B1020]"}`}>{failure?"On":"Off"}</button>
+              </div>
+              <div className="text-[11px] leading-relaxed text-slate-500">With the drill on, orders take the fallback path: cached decision, banner, audit entry.</div>
             </div>
           </div>
           <div className="rz-card p-4">
