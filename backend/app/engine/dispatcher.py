@@ -152,10 +152,12 @@ def score_proposal(
     # 1. Expected revenue: V * p_conv * confidence
     est_revenue = amount * conv_prob * confidence
 
-    # 2. Churn risk: marginal risk from THIS action
-    # Each additional contact increases churn probability by a small amount
-    # Risk = (fatigue_rate) × LTV × λ — only the incremental risk from this contact
-    fatigue_rate = 0.08 if not channel == 'whatsapp' else 0.05  # whatsapp is less intrusive
+    # 2. Churn risk: marginal risk from THIS action only.
+    # One message raises churn probability by a fraction of a percent —
+    # calibrated so a single contact costs basis points of LTV, not whole
+    # percent points. Larger values make every candidate score negative
+    # and no agent ever activates. Risk = fatigue_rate × LTV × λ.
+    fatigue_rate = 0.003 if channel != 'whatsapp' else 0.002
     churn_risk = fatigue_rate * ltv * CHURN_COST_FRACTION
 
     # 3. Discount cost: discount × sensitivity (how much value you give away)
