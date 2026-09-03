@@ -131,6 +131,11 @@ def dequeue_block(timeout_ms: int = 5000) -> Optional[Dict[str, Any]]:
         msg_id, fields = entries[0]
         return {"msg_id": msg_id, "fields": fields}
     except Exception as e:
+        # A blocking read with no messages inside the window raises a socket
+        # timeout. That is the idle steady state, not a failure: stay quiet
+        # and let the worker poll again. Only real errors get logged.
+        if "timeout" in type(e).__name__.lower() or "timeout" in str(e).lower():
+            return None
         logger.warning("XREADGROUP failed: %s", e)
         return None
 
