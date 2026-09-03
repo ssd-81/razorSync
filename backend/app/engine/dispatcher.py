@@ -49,11 +49,14 @@ def generate_candidate_proposals(
     customer: CustomerContext,
     merchant_id: str,
     amount: float = 0.0,
+    use_llm: bool = True,
 ) -> List[Dict[str, Any]]:
     """Generate action proposals for all agents eligible for this event.
 
     Phase A: deterministic from AGENT_DEFS.
     Phase B: calls LLM for each candidate, falls back to AGENT_DEFS on failure.
+    Simulation must pass use_llm=False — hundreds of contacts would otherwise
+    hammer the LLM provider into 429s with zero evaluation value.
     """
     from app.simulation.agents import WEBHOOK_AGENT_MAP
     try:
@@ -85,7 +88,7 @@ def generate_candidate_proposals(
 
         # Phase B: try LLM first, fall back to deterministic
         llm_result = None
-        if LLM_ENABLED:
+        if use_llm and LLM_ENABLED:
             llm_result = call_llm(agent_type, merchant_id, event, customer.id, amount, cust_ctx)
 
         if llm_result:
@@ -193,6 +196,7 @@ def dispatch(
     merchant_id: str,
     amount: float = 0.0,
     db: Optional[Session] = None,
+    use_llm: bool = True,
 ) -> DispatcherResult:
     """Main dispatcher: generate proposals, score all, pick winner.
 
@@ -200,7 +204,7 @@ def dispatch(
     """
     result = DispatcherResult()
 
-    proposals = generate_candidate_proposals(event, customer, merchant_id, amount)
+    proposals = generate_candidate_proposals(event, customer, merchant_id, amount, use_llm=use_llm)
     if not proposals:
         result.all_blocked = True
         result.block_reason = f"No eligible agents for event: {event}"

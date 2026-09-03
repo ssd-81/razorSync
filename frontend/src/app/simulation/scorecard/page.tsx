@@ -19,7 +19,7 @@ export default function ScorecardPage() {
     setLoading(true); setError(null); setProgress(0);
     try {
       const body = { num_customers: numCustomers, seeds: seeds.split(",").map((s) => parseInt(s.trim())).filter((n) => !isNaN(n)), duration_days: duration };
-      const r = await apiFetch("/api/v1/simulation/scorecard", { method: "POST", body: JSON.stringify(body) });
+      const r = await apiFetch("/api/v1/simulation/scorecard", { method: "POST", body: JSON.stringify(body) }, 120000);
       setScorecard(r); setProgress(100);
     } catch (e: any) { setError(String(e)); } finally { setLoading(false); }
   };
@@ -42,9 +42,9 @@ export default function ScorecardPage() {
   };
 
   const run = () => {
-    const count = seeds.split(",").filter((s) => s.trim()).length;
-    if (count > 4) return runAsync();
-    return runSync();
+    // Sync POST times out after 10s (apiFetch default) once dispatcher runs per
+    // contact — 200x3 is well over that. Always use the async job + polling.
+    return runAsync();
   };
 
   return (
@@ -144,6 +144,43 @@ export default function ScorecardPage() {
             <ChartCard title="Contact Volume" sub="Fewer contacts, same intent" data={scorecard.charts.contacts} colors={['#94A3B8', '#0EA5E9']} formatter={(v: number) => safeInt(v)} />
             <ChartCard title="Churn Cost" sub="Cost of lost customers" data={scorecard.charts.churn_cost} colors={['#FCA5A5', '#EF4444']} formatter={(v: number) => safeCurrency(v)} />
           </div>
+
+          {/* v4: which agents did the work — dispatcher wins across all seeds */}
+          {(scorecard.dispatcher || scorecard.agent_wins_chart) && (
+            <div className="rz-card overflow-hidden">
+              <div className="px-5 py-4 border-b bg-[#F9FAFB] flex items-center gap-2">
+                <span className="rz-section-title">Agent wins — coordinated races</span>
+                <span className="ml-auto rz-pill bg-white border text-slate-500">{scorecard.dispatcher?.races ?? 0} races • {scorecard.dispatcher?.policy_blocks ?? 0} policy blocks • {scorecard.dispatcher?.governor_blocks ?? 0} governor blocks</span>
+              </div>
+              <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                <div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={scorecard.agent_wins_chart || []} layout="vertical" margin={{ left: 24 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#EAECF0" />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: "#667085" }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#101828" }} axisLine={false} tickLine={false} width={150} />
+                      <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #EAECF0", fontSize: 12 }} />
+                      <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                        {(scorecard.agent_wins_chart || []).map((_: any, idx: number) => (
+                          <Cell key={idx} fill={['#0B5CFF', '#0EA5E9', '#8B5CF6', '#10B981'][idx % 4]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="space-y-2">
+                  {(scorecard.agent_wins_chart || []).map((w: any) => (
+                    <div key={w.name} className="flex items-center gap-2 text-sm border rounded-lg px-3 py-2">
+                      <span className="rz-mono font-semibold">{w.name}</span>
+                      <span className="ml-auto rz-pill bg-slate-900 text-white">{safeInt(w.value)} wins</span>
+                    </div>
+                  ))}
+                  {(!scorecard.agent_wins_chart || scorecard.agent_wins_chart.length === 0) && <div className="text-xs text-slate-500">No dispatcher races recorded — run a simulation to see which agents win.</div>}
+                  <div className="text-[11px] text-slate-500 leading-relaxed">Same policy scoring as live: winner per contact, governor can still veto. Per-seed breakdown in JSON below.</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="rz-card overflow-hidden">
             <div className="px-5 py-3 border-b bg-[#F9FAFB] flex items-center gap-2">

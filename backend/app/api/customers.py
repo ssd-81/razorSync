@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.customer import CustomerContext
 from app.models.audit import AuditEntry
+from app.utils.time import utc_iso
 
 router = APIRouter(prefix="/api/v1/customers", tags=["customers"])
 
@@ -24,7 +25,7 @@ def list_customers(
     if archetype:
         q = q.filter(CustomerContext.archetype == archetype)
     total = q.count()
-    rows = q.order_by(CustomerContext.created_at.desc()).offset(offset).limit(limit).all()
+    rows = q.order_by(CustomerContext.created_at.desc(), CustomerContext.id.asc()).offset(offset).limit(limit).all()
     return {
         "total": total,
         "limit": limit,
@@ -41,7 +42,7 @@ def list_customers(
                 "total_contacts_received": c.total_contacts_received,
                 "current_discount_exposure": c.current_discount_exposure,
                 "churned": c.churned,
-                "last_contact_at": c.last_contact_at,
+                "last_contact_at": utc_iso(c.last_contact_at),
             }
             for c in rows
         ],
@@ -72,7 +73,7 @@ def get_customer_context(customer_id: str, db: Session = Depends(get_db)):
             "total_contacts_received": c.total_contacts_received,
             "total_conversions": c.total_conversions,
             "churned": c.churned,
-            "last_contact_at": c.last_contact_at,
+            "last_contact_at": utc_iso(c.last_contact_at),
             "last_contact_channel": c.last_contact_channel,
             "last_contact_agent": c.last_contact_agent,
             "response_probability": c.response_probability,
@@ -82,7 +83,7 @@ def get_customer_context(customer_id: str, db: Session = Depends(get_db)):
         "recent_audits": [
             {
                 "id": a.id,
-                "timestamp": a.timestamp,
+                "timestamp": utc_iso(a.timestamp),
                 "action_id": a.action_id,
                 "decision_id": a.decision_id,
                 "rules_evaluated": json.loads(a.rules_evaluated) if a.rules_evaluated else [],

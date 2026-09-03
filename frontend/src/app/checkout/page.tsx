@@ -17,7 +17,7 @@ export default function CheckoutPage() {
   const [orderResult, setOrderResult] = useState<any>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [webhookStatus, setWebhookStatus] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
     setMounted(true);
@@ -34,27 +34,21 @@ export default function CheckoutPage() {
   }, []);
 
   const pollDecision = useCallback(async (customerId: string) => {
-    setWebhookStatus("Waiting for Razorpay webhook…");
+    setStatusMessage("Confirming payment…");
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       try {
         const decisions = await apiFetch("/api/v1/decisions/recent?limit=5") as any[];
         if (Array.isArray(decisions)) {
           const match = decisions.find((d: any) => d.customer_id === customerId && d.source === "live");
-          if (match) { setDecision(match); setStep("done"); setWebhookStatus("Webhook received — coordination decision made"); return; }
+          if (match) { setDecision(match); setStep("done"); setStatusMessage(""); return; }
         }
-        // Also check inbox for policy-blocked (no decision) case — show it as blocked
-        try {
-          const inbox: any = await apiFetch("/api/v1/webhook/inbox?limit=5");
-          const recent = Array.isArray(inbox) ? inbox.find((x: any) => x.customer_id === customerId && x.status === "completed") : null;
-          if (recent && decisions.length === 0) setWebhookStatus(`Webhook ${recent.event} processed (policy check) — waiting for decision… (${i + 1}/30)`);
-        } catch {}
       } catch {}
-      setWebhookStatus(`Waiting for webhook… (${i + 1}/30)`);
+      setStatusMessage(`Confirming payment… (${i + 1}/30)`);
     }
-    setError("Webhook not received within 60s — Razorpay may not have fired (check Dashboard → Settings → Webhooks → Logs), or tunnel URL rotated. Fix: re-check https://<your-tunnel>/health via tunnel, re-register webhook URL, and try again. Recent payment was still captured — check Audit trail for last decision or retry checkout.");
-    setWebhookStatus("Timed out — no decision for this customer yet.");
-    setStep("form"); // allow retry — was stuck on waiting with no error before fix
+    setError("Confirmation timed out — payment may still have succeeded. Check Ops for the latest decision or try again.");
+    setStatusMessage("");
+    setStep("form");
   }, []);
 
   const handlePayment = async () => {
@@ -77,7 +71,7 @@ export default function CheckoutPage() {
         },
         prefill: { contact: customers.find((c) => c.id === selectedCustomer)?.phone || "", email: customers.find((c) => c.id === selectedCustomer)?.email || "" },
         theme: { color: "#0B5CFF" },
-        modal: { ondismiss: function () { setStep("form"); setLoading(false); setError("Payment cancelled by user."); } },
+        modal: { ondismiss: function () { setStep("form"); setLoading(false); setError("Payment cancelled."); } },
         // Request all methods — popup only shows what’s enabled in Dashboard. If only Card appears, enable UPI/Netbanking there.
         config: {
           display: {
@@ -114,7 +108,7 @@ export default function CheckoutPage() {
 
   const razorpayLoaded = typeof window !== "undefined" && !!window.Razorpay;
   const steps: Array<{ key: typeof step; label: string }> = [
-    { key: "form", label: "Pay" }, { key: "paying", label: "Checkout" }, { key: "waiting", label: "Webhook" }, { key: "done", label: "Done" }
+    { key: "form", label: "Pay" }, { key: "paying", label: "Checkout" }, { key: "waiting", label: "Confirming" }, { key: "done", label: "Done" }
   ];
   const stepIdx = steps.findIndex((s) => s.key === step);
 
@@ -176,8 +170,8 @@ export default function CheckoutPage() {
           <div className="w-12 h-12 rounded-xl bg-[#F2F4F7] border flex items-center justify-center mx-auto">
             {step === "paying" ? <CreditCard size={18} className="text-[#0B5CFF]" /> : <Loader2 size={18} className="animate-spin text-[#0B5CFF]" />}
           </div>
-          <div className="text-[16px] font-semibold">{step === "paying" ? "Complete payment in Razorpay" : "Waiting for webhook…"}</div>
-          <div className="text-sm text-slate-500">{webhookStatus || "Processing…"}</div>
+          <div className="text-[16px] font-semibold">{step === "paying" ? "Complete payment in Razorpay" : "Confirming payment…"}</div>
+          <div className="text-sm text-slate-500">{statusMessage || "Processing…"}</div>
           {orderResult && <div className="rz-mono bg-[#F9FAFB] border rounded-xl px-3 py-2 text-slate-500">Order {orderResult.order_id} {orderResult.payment_id ? `• Payment ${orderResult.payment_id}` : ""}</div>}
           <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400"><Clock size={12} /> Confirming payment • up to 30s</div>
         </div>
@@ -239,7 +233,7 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          <button onClick={() => { setStep("form"); setOrderResult(null); setDecision(null); setError(null); setWebhookStatus(""); }} className="rz-btn-secondary"><ArrowLeft size={14} /> Pay again</button>
+          <button onClick={() => { setStep("form"); setOrderResult(null); setDecision(null); setError(null); setStatusMessage(""); }} className="rz-btn-secondary"><ArrowLeft size={14} /> Pay again</button>
         </div>
       )}
 

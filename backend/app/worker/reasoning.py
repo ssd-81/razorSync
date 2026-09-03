@@ -4,20 +4,65 @@ Reads from Redis Stream razor:inbox (or DB fallback) and runs:
 Dispatcher (candidates -> LLM propose -> Policy score -> winner) -> Governor -> Audit
 """
 import json
-import uuid
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
-from app.db.database import SessionLocal
+from app.db.database import SessionLocal, commit_with_retry, is_locked_error
 from app.models.customer import CustomerContext
-from app.models.action import AgentAction
-from app.models.audit import AuditEntry
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_order_stub(db: Session, razorpay_order_id: str, customer_id: str,
+                      entity: Dict[str, Any], event: str, retries: int = 5) -> None:
+    """Idempotent order stub for the worker (mirrors webhooks.upsert_order_stub).
+
+    The webhook thread may have already inserted this order id; a duplicate
+    PK insert raises IntegrityError which we absorb via update. Lock
+    contention is retried with backoff. Every failure path rolls back so the
+    session is never left in PendingRollback state.
+    """
+    from app.models.order import Order
+    status = "paid" if event in ("payment.captured", "order.paid") else event
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            existing = db.query(Order).filter(Order.id == razorpay_order_id).first()
+            if existing is None:
+                db.add(Order(
+                    id=razorpay_order_id,
+                    merchant_id=settings.MERCHANT_ID,
+                    customer_id=customer_id,
+                    amount=int(entity.get("amount", 0) or 0),
+                    currency=entity.get("currency", "INR"),
+                    status=status,
+                    razorpay_response=json.dumps(entity),
+                ))
+                db.flush()
+            return
+        except IntegrityError:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return  # row exists now (inserted concurrently) - nothing to do
+        except Exception as e:
+            last_exc = e
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            if is_locked_error(e) and attempt < retries - 1:
+                time.sleep(0.05 * (2 ** attempt))
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
 
 
 def process_inbox_item(event: str, payload: Dict[str, Any], db: Session) -> Optional[Dict[str, Any]]:
@@ -33,172 +78,70 @@ def process_inbox_item(event: str, payload: Dict[str, Any], db: Session) -> Opti
     razorpay_order_id = entity.get("order_id") or entity.get("id") or payload.get("razorpay_order_id")
 
     if not customer_id:
-        fallback = db.query(CustomerContext).filter(CustomerContext.merchant_id == settings.MERCHANT_ID).first()
+        try:
+            from app.services.customer_resolve import resolve_fallback_customer
+            fallback = resolve_fallback_customer(db, settings.MERCHANT_ID)
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            fallback = None
         if fallback:
             customer_id = fallback.id
         else:
             logger.warning("No customer for event %s", event)
             return None
 
-    # Ensure order stub
+    # Ensure order stub (idempotent; never poisons the session on failure)
     if razorpay_order_id:
         try:
-            from app.models.order import Order
-            existing = db.query(Order).filter(Order.id == razorpay_order_id).first()
-            if not existing:
-                stub = Order(
-                    id=razorpay_order_id,
-                    merchant_id=settings.MERCHANT_ID,
-                    customer_id=customer_id,
-                    amount=int(entity.get("amount", 0)),
-                    currency=entity.get("currency", "INR"),
-                    status="paid" if event in ("payment.captured", "order.paid") else event,
-                    razorpay_response=json.dumps(entity),
-                )
-                db.add(stub)
-                db.flush()
+            ensure_order_stub(db, razorpay_order_id, customer_id, entity, event)
         except Exception as e:
-            logger.warning("Order stub failed: %s", e)
+            logger.warning("Order stub failed after retries: %s", e)
 
-    # Dispatcher -> Governor
-    from app.engine.dispatcher import dispatch
-    customer = db.query(CustomerContext).filter(CustomerContext.id == customer_id).first()
+    # v4: single shared full-cycle path (same as POST /orders).
+    try:
+        customer = db.query(CustomerContext).filter(CustomerContext.id == customer_id).first()
+    except Exception as e:
+        logger.warning("Customer lookup failed, rolled back: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
     if not customer:
         logger.warning("Customer %s not found for event %s", customer_id, event)
         return None
 
     amount = float(entity.get("amount", 0)) / 100.0 if entity.get("amount") else 0.0
-    dispatcher_result = dispatch(event, customer, settings.MERCHANT_ID, amount, db)
-
-    decision_payload = None
-    if dispatcher_result.winner:
+    from app.engine.full_cycle import run_full_cycle
+    try:
+        fc = run_full_cycle(db, event=event, customer=customer, amount=amount, source="live", order_id=razorpay_order_id, action_prefix="webhook")
+    except Exception as e:
+        logger.exception("Reasoning failed: %s", e)
         try:
-            from app.engine.coordinator import CoordinationEngine
-            winner = dispatcher_result.winner
-            now = datetime.now(timezone.utc)
-            action = AgentAction(
-                id=f"act_{uuid.uuid4().hex[:12]}",
-                agent_id=f"{winner['agent_type']}_webhook_{uuid.uuid4().hex[:6]}",
-                agent_type=winner["agent_type"],
-                customer_id=customer_id,
-                merchant_id=settings.MERCHANT_ID,
-                action_type=f"webhook_{event}",
-                channel=winner["channel"],
-                priority=7,
-                message_template=f"{winner.get('reasoning', winner['agent_type'])} for order {razorpay_order_id}",
-                discount_offered=winner["discount_offered"],
-                amount_involved=amount,
-                proposed_at=now,
-                proposed_delay_seconds=int(winner.get("delay_h", 0) * 3600),
-                confidence=winner["confidence"],
-                reasoning=f"Dispatcher winner: {winner['agent_type']} (score={winner['score']:.4f}) — {winner.get('reasoning', '')}",
-            )
-            db.add(action)
-            db.flush()
-            engine = CoordinationEngine(db)
-            decision = engine.process_action(action)
-            # Ensure source is live (process_action commits)
-            try:
-                decision.source = "live"
-                db.add(decision)
-                db.commit()
-                db.refresh(decision)
-            except Exception:
-                db.commit()
-
-            # Enrich audit
-            audit = db.query(AuditEntry).filter(AuditEntry.decision_id == decision.id).first()
-            if audit:
-                audit.webhook_event = event
-                audit.razorpay_order_id = razorpay_order_id
-                db.add(audit)
-                db.commit()
-
-            decision_payload = {
-                "decision_id": decision.id,
-                "verdict": decision.verdict,
-                "block_reason": decision.block_reason,
-                "reasoning": decision.reasoning,
-                "source": getattr(decision, "source", "live"),
-            }
-            logger.info("Processed %s → winner %s → %s (%s)", event, winner["agent_type"], decision.id, decision.verdict)
-        except Exception as e:
-            logger.exception("Reasoning failed: %s", e)
             db.rollback()
-    elif dispatcher_result and dispatcher_result.candidates:
-        # All candidates blocked at policy level (score ≤0). Still create a visible blocked decision
-        # so frontend polling (decisions/recent) has something to show instead of infinite "waiting".
-        try:
-            from app.models.decision import CoordinationDecision
-            best = dispatcher_result.candidates[0]  # highest (least negative) score
-            now = datetime.now(timezone.utc)
-            action = AgentAction(
-                id=f"act_{uuid.uuid4().hex[:12]}",
-                agent_id=f"{best['agent_type']}_policy_block_{uuid.uuid4().hex[:6]}",
-                agent_type=best["agent_type"],
-                customer_id=customer_id,
-                merchant_id=settings.MERCHANT_ID,
-                action_type=f"webhook_{event}",
-                channel=best["channel"],
-                priority=7,
-                message_template=f"Policy blocked: {best['agent_type']} (score={best['score']:.4f}) for order {razorpay_order_id}",
-                discount_offered=best["discount_offered"],
-                amount_involved=amount,
-                proposed_at=now,
-                proposed_delay_seconds=int(best.get("delay_h", 0) * 3600),
-                confidence=best["confidence"],
-                reasoning=f"Policy blocked — {dispatcher_result.block_reason} — best was {best['agent_type']} ({best['score']:.4f})",
-            )
-            db.add(action)
-            db.flush()
-            decision = CoordinationDecision(
-                id=f"dec_{uuid.uuid4().hex[:12]}",
-                action_id=action.id,
-                customer_id=customer_id,
-                verdict="blocked",
-                block_reason=dispatcher_result.block_reason or f"Policy: all candidates scored ≤0 (best {best['agent_type']}={best['score']:.4f})",
-                rules_applied="[]",
-                reasoning=f"Policy blocked — {dispatcher_result.block_reason}",
-                confidence=float(best["confidence"] or 0.5),
-                source="live",
-            )
-            db.add(decision)
-            db.flush()
-            audit = AuditEntry(
-                id=f"aud_{uuid.uuid4().hex[:12]}",
-                customer_id=customer_id,
-                merchant_id=settings.MERCHANT_ID,
-                action_id=action.id,
-                decision_id=decision.id,
-                customer_snapshot=json.dumps({"id": customer_id, "dispatcher_block": True}),
-                active_agent_count=len(dispatcher_result.candidates),
-                rules_evaluated=json.dumps([]),
-                webhook_event=event,
-                razorpay_order_id=razorpay_order_id,
-            )
-            db.add(audit)
-            db.commit()
-            decision_payload = {
-                "decision_id": decision.id,
-                "verdict": "blocked",
-                "block_reason": decision.block_reason,
-                "reasoning": decision.reasoning,
-                "source": "live",
-            }
-            logger.info("Policy blocked %s → created blocked decision %s for %s: %s", event, decision.id, best["agent_type"], decision.block_reason)
-        except Exception as e:
-            logger.exception("Policy-blocked handling failed: %s", e)
-            db.rollback()
-
+        except Exception:
+            pass
+        return None
+    decision = fc["decision"]
+    dispatcher_info = fc["dispatcher"]
     return {
         "event": event,
         "customer_id": customer_id,
         "order_id": razorpay_order_id,
-        "decision": decision_payload,
-        "dispatcher": {
-            "candidates": [{"agent_type": c["agent_type"], "channel": c["channel"], "score": c["score"]} for c in dispatcher_result.candidates],
-            "winner": dispatcher_result.winner["agent_type"] if dispatcher_result.winner else None,
-        } if dispatcher_result else None,
+        "decision": {
+            "decision_id": decision.id,
+            "verdict": decision.verdict,
+            "block_reason": decision.block_reason,
+            "reasoning": decision.reasoning,
+            "source": getattr(decision, "source", "live"),
+            "trigger_event": getattr(decision, "trigger_event", event),
+            "dispatcher_winner": getattr(decision, "dispatcher_winner", dispatcher_info.get("winner")),
+            "message_preview": fc["action"].message_template,
+        },
+        "dispatcher": dispatcher_info,
     }
 
 
@@ -207,22 +150,50 @@ def process_pending_db_queue(limit: int = 10):
     db = SessionLocal()
     try:
         from app.models.inbox import InboxEntry
-        pending = db.query(InboxEntry).filter(InboxEntry.status == "queued").order_by(InboxEntry.created_at.asc()).limit(limit).all()
+        try:
+            pending = db.query(InboxEntry).filter(InboxEntry.status == "queued").order_by(InboxEntry.created_at.asc()).limit(limit).all()
+        except Exception as e:
+            logger.warning("DB queue poll failed: %s", e)
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return
         for entry in pending:
-            entry.status = "processing"
-            db.commit()
+            entry_id = entry.id
+            try:
+                entry.status = "processing"
+                commit_with_retry(db)
+            except Exception as e:
+                logger.warning("DB queue claim %s failed: %s", entry_id, e)
+                continue
             try:
                 payload = json.loads(entry.payload)
                 result = process_inbox_item(entry.event, payload, db)
-                entry.status = "completed"
-                entry.processed_at = datetime.now(timezone.utc)
-                db.commit()
-                logger.info("DB queue processed %s -> %s", entry.id, result)
+                # Re-fetch: process_inbox_item may have rolled back, detaching entry
+                ie = db.query(InboxEntry).filter(InboxEntry.id == entry_id).first()
+                if ie:
+                    ie.status = "completed"
+                    ie.processed_at = datetime.now(timezone.utc)
+                commit_with_retry(db)
+                logger.info("DB queue processed %s -> %s", entry_id, result)
             except Exception as e:
-                logger.exception("DB queue item %s failed: %s", entry.id, e)
-                entry.status = "failed"
-                entry.error = str(e)
-                db.commit()
+                logger.exception("DB queue item %s failed: %s", entry_id, e)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    ie = db.query(InboxEntry).filter(InboxEntry.id == entry_id).first()
+                    if ie:
+                        ie.status = "failed"
+                        ie.error = str(e)[:2000]
+                    commit_with_retry(db)
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
     finally:
         db.close()
 
@@ -250,29 +221,36 @@ def worker_loop(stop_event=None):
                 db = SessionLocal()
                 try:
                     result = process_inbox_item(event, payload, db)
-                    # Mark inbox entry completed
+                    # Mark inbox entry completed (re-query: reasoning may have
+                    # rolled back mid-way, detaching earlier objects)
                     try:
                         from app.models.inbox import InboxEntry
                         ie = db.query(InboxEntry).filter(InboxEntry.id == inbox_id).first()
                         if ie:
                             ie.status = "completed"
                             ie.processed_at = datetime.now(timezone.utc)
-                            db.commit()
-                    except Exception:
-                        pass
+                        commit_with_retry(db)
+                    except Exception as e:
+                        logger.warning("Inbox completion mark failed for %s: %s", inbox_id, e)
                     ack(msg_id)
                 except Exception as e:
                     logger.exception("Worker item %s failed: %s", msg_id, e)
                     try:
                         db.rollback()
+                    except Exception:
+                        pass
+                    try:
                         from app.models.inbox import InboxEntry
                         ie = db.query(InboxEntry).filter(InboxEntry.id == inbox_id).first()
                         if ie:
                             ie.status = "failed"
-                            ie.error = str(e)
-                            db.commit()
+                            ie.error = str(e)[:2000]
+                            commit_with_retry(db)
                     except Exception:
-                        pass
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
                     # Still ack to avoid poison loop (or use XCLAIM for retry)
                     ack(msg_id)
                 finally:

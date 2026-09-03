@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.schemas import RuleCreateRequest, RuleUpdateRequest
 from app.models.rule import BusinessRule
 from app.config import settings
+from app.utils.time import utc_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/rules", tags=["rules"])
@@ -30,7 +31,7 @@ def list_rules(merchant_id: str = None, db: Session = Depends(get_db)):
                 "rule_config": json.loads(r.rule_config) if isinstance(r.rule_config, str) else r.rule_config,
                 "priority": r.priority,
                 "is_active": r.is_active,
-                "created_at": r.created_at,
+                "created_at": utc_iso(r.created_at),
             }
             for r in rules
         ]

@@ -135,9 +135,18 @@ flowchart TB
     verify["Verify HMAC signature"]
     inbox["Redis Stream + DB inbox"]
     worker["Reasoning worker"]
-    pipe["Guardrails → Rules → Dispatcher"]
+    fullcycle["run_full_cycle<br/>(engine/full_cycle.py)"]
     store[("SQLite WAL\ndecisions + audit")]
     score["Scorecard (multi-seed, CI, p-value)"]
+
+    subgraph coord["Coordination Engine (engine/coordinator.py)"]
+        disp["Dispatcher<br/>policy scoring, picks winner"]
+        guard["Hard guardrails<br/>SUSPEND + HITL"]
+        rules["Windowed rules<br/>frequency / cooldown / IST window / budget"]
+        coll["Collisions + Priority"]
+        decide["Decide + Audit<br/>approve / block + reasoning"]
+        disp --> guard --> rules --> coll --> decide
+    end
 
     dash -->|"1. create order"| orders
     orders -->|"2. order.create"| api
@@ -145,10 +154,11 @@ flowchart TB
     hook -->|"4. POST /webhook/razorpay"| verify
     verify -->|"5. ack, enqueue"| inbox
     inbox -->|"6. drain"| worker
-    worker --> pipe
-    pipe -->|"7. verdict + reasoning"| store
+    worker --> fullcycle
+    fullcycle --> disp
+    decide -->|"7. verdict + reasoning + trace"| store
     store -->|"8. poll /decisions/recent (2s)"| dash
-    score -.->|"same RulesEngine"| pipe
+    score -.->|"same RulesEngine + Dispatcher"| coord
 ```
 
 - **Windowed rules:** `frequency_cap`, `cooldown`, `escalation_ceiling` count `proposed_at >= now - window`; `budget_limit` is cumulative; `time_window` is IST (`Asia/Kolkata`).

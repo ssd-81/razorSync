@@ -35,7 +35,7 @@ _DEFAULT_AGENT_DEFS = {
 _DEFAULT_WEBHOOK_MAP = {
     "payment.failed": ["autopay_retry", "invoice_dunning"],
     "payment.captured": ["x_payout_growth"],
-    "order.paid": ["x_payout_growth"],
+    "order.paid": ["x_payout_growth", "payment_link_recovery"],
     "payment_link.abandoned": ["payment_link_recovery"],
     "invoice.overdue": ["invoice_dunning"],
     "refund.created": ["autopay_retry"],

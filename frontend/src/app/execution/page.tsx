@@ -2,10 +2,11 @@
 import { useState, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 import { Inbox, Brain, Scale, Shield, UserCheck, CheckCircle2, Clock, GitBranch, RefreshCw } from "lucide-react";
-import { safeFixed } from "@/lib/format";
+import { safeFixed, formatISTTime, formatISTDateTime } from "@/lib/format";
+import FullCycleCard from "@/components/FullCycleCard";
 
-interface TimelineNode { type: string; label: string; status: string; detail: string; agent_type?: string; channel?: string; score?: number; ticket_id?: string; decision?: string; override?: boolean; verdict?: string; source?: string; }
-interface ExecutionChain { decision_id: string; customer_id: string; agent_type: string; channel: string; source: string; created_at: string; nodes: TimelineNode[]; }
+interface TimelineNode { type: string; label: string; status: string; detail: string; agent_type?: string; channel?: string; score?: number; ticket_id?: string; decision?: string; override?: boolean; verdict?: string; source?: string; candidates?: any[]; winner?: string | null; }
+interface ExecutionChain { decision_id: string; customer_id: string; agent_type: string; channel: string; source: string; created_at: string; nodes: TimelineNode[]; trigger_event?: string | null; dispatcher_winner?: string | null; dispatcher_candidates?: any[]; message_preview?: string | null; verdict?: string; block_reason?: string | null; }
 
 const STATUS_COLORS: Record<string, string> = {
   completed: "bg-emerald-500", passed: "bg-emerald-500", approved: "bg-emerald-500",
@@ -69,12 +70,13 @@ export default function ExecutionPage() {
                   <span className="rz-mono bg-white border px-2 py-0.5 rounded-full text-slate-500 hidden sm:inline-flex">{chain.customer_id.slice(0,12)}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-slate-500 shrink-0">
-                  <Clock size={12} /> {chain.created_at ? new Date(chain.created_at).toLocaleTimeString() : "—"}
+                  <Clock size={12} /> <span title={chain.created_at ? formatISTDateTime(chain.created_at) : undefined}>{chain.created_at ? `${formatISTTime(chain.created_at)} IST` : "—"}</span>
                   <span className="rz-pill bg-white border text-slate-500">{chain.source || "—"}</span>
                 </div>
               </div>
 
-              <div className="p-5">
+              <div className="p-5 space-y-4">
+                <FullCycleCard d={{ id: chain.decision_id, customer_id: chain.customer_id, verdict: chain.verdict || last?.status || "approved", block_reason: chain.block_reason, reasoning: last?.detail, source: chain.source, trigger_event: chain.trigger_event, dispatcher_winner: chain.dispatcher_winner, dispatcher: { candidates: chain.dispatcher_candidates || [], winner: chain.dispatcher_winner }, action: { agent_type: chain.agent_type, channel: chain.channel, message_preview: chain.message_preview }, created_at: chain.created_at }} />
                 <div className="relative ml-2">
                   {chain.nodes.map((node, idx) => {
                     const Icon = NODE_ICONS[node.type] || Clock;

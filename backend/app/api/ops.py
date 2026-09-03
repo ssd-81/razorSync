@@ -9,6 +9,7 @@ from app.db.database import get_db
 from app.services.razorpay_client import razorpay_client
 from app.models.decision import CoordinationDecision
 from app.models.audit import AuditEntry
+from app.utils.time import utc_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ops", tags=["ops"])
@@ -70,7 +71,7 @@ def get_ops_state(db: Session = Depends(get_db)):
                 "customer_id": d.customer_id,
                 "reasoning": d.reasoning,
                 "source": getattr(d, "source", "live"),
-                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "created_at": utc_iso(d.created_at),
             }
             for d in recent_decisions
         ],
@@ -80,7 +81,7 @@ def get_ops_state(db: Session = Depends(get_db)):
                 "customer_id": a.customer_id,
                 "webhook_event": a.webhook_event,
                 "razorpay_order_id": a.razorpay_order_id,
-                "timestamp": a.timestamp.isoformat() if a.timestamp else None,
+                "timestamp": utc_iso(a.timestamp),
             }
             for a in recent_audits
         ],

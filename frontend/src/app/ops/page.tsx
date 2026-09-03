@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "@/lib/api";
-import { MessageCircle, Smartphone, Mail, Bell, MonitorSmartphone, Check, X, Clock, AlertTriangle, Zap, Activity, Cpu } from "lucide-react";
-import { safeFixed } from "@/lib/format";
+import { formatISTTime, formatISTDateTime } from "@/lib/format";
+import { MessageCircle, Smartphone, Mail, Bell, MonitorSmartphone, Check, Ban, Clock, AlertTriangle, Activity, Cpu } from "lucide-react";
+import FullCycleCard from "@/components/FullCycleCard";
 
 interface Decision {
   id: string;
@@ -12,7 +13,10 @@ interface Decision {
   reasoning: string;
   source: string;
   created_at: string;
-  action: { agent_type: string; channel: string; amount_involved: number; discount_offered: number } | null;
+  trigger_event?: string | null;
+  dispatcher_winner?: string | null;
+  dispatcher?: { candidates: any[]; winner?: string | null } | null;
+  action: { agent_type: string; channel: string; amount_involved: number; discount_offered: number; message_preview?: string | null } | null;
   rules_applied: string | null;
 }
 
@@ -43,7 +47,7 @@ export default function OpsPage() {
   const [inbox, setInbox] = useState<any[]>([]);
   const [agents, setAgents] = useState<any>(null);
   const [llm, setLlm] = useState<any>(null);
-  const [dispatcher, setDispatcher] = useState<any>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -96,7 +100,7 @@ export default function OpsPage() {
       const body = { amount: amount*100, currency: "INR", customer_id: selectedCustomer, receipt: `rcpt_${Date.now()}` };
       const r = await apiFetch("/api/v1/orders", { method: "POST", body: JSON.stringify(body) });
       setOrderResult(r); if (r.banner) setBanner(r.banner);
-      if (r.decision) setDispatcher(null);
+      else setBanner(r.note || `Order ${r.order?.id} created — send a test event or complete payment for a decision.`);
       setTimeout(()=> apiFetch("/api/v1/webhook/inbox?limit=5").then(setInbox).catch(()=>{}), 800);
     } catch (e:any) { setBanner(String(e)); }
     finally { setLoadingOrder(false); }
@@ -117,7 +121,6 @@ export default function OpsPage() {
       const sig = Array.from(new Uint8Array(sigBuf)).map(b=>b.toString(16).padStart(2,"0")).join("");
       const r = await apiFetch("/api/v1/webhook/razorpay", { method:"POST", body: raw, headers: {"X-Razorpay-Signature": sig} as any });
       setBanner(`Queued ${r.inbox_id} → ${r.dispatcher?.winner ?? r.decision?.verdict ?? "pending"}`);
-      if (r.dispatcher) setDispatcher(r.dispatcher);
       apiFetch("/api/v1/webhook/inbox?limit=10").then(setInbox).catch(()=>{});
     } catch (e:any) { setBanner(String(e)); }
   };
@@ -169,7 +172,7 @@ export default function OpsPage() {
                 <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Order ID</div><div className="rz-mono font-medium truncate mt-1">{orderResult.order?.id}</div></div>
                 <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Status</div><div className={`font-semibold mt-1 ${orderResult.order?.fallback?"text-amber-600":"text-emerald-600"}`}>{orderResult.order?.status}</div></div>
                 <div className="bg-slate-50 rounded-lg p-3 border"><div className="text-slate-500 text-[11px] uppercase tracking-wide">Latency</div><div className="font-medium mt-1">{orderResult.latency_ms ?? "—"} ms</div></div>
-                {orderResult.decision && <div className="col-span-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs leading-relaxed"><span className="font-semibold">Decision:</span> {orderResult.decision.verdict} — {orderResult.decision.reasoning} <span className="rz-pill bg-slate-900 text-white ml-2">{orderResult.decision.source}</span></div>}
+                {orderResult.note && <div className="col-span-3 bg-slate-50 border rounded-lg p-3 text-xs leading-relaxed text-slate-600">{orderResult.note}</div>}
               </div>
             )}
           </div>
@@ -179,7 +182,11 @@ export default function OpsPage() {
               <h2 className="font-semibold text-sm">Decisions</h2>
               <span className="ml-auto text-xs text-slate-400">{decisions.length} decisions</span>
             </div>
-            <p className="text-xs text-slate-500 mt-1 mb-4">Every verdict lands here with the reason attached — newest at the bottom.</p>
+            <p className="text-xs text-slate-500 mt-1 mb-4">Every verdict lands here with the reason attached — click any row to inspect the full race. Newest at the bottom.</p>
+            {(() => {
+              const sel = decisions.find((x) => x.id === selectedId) || [...decisions].slice(-1)[0];
+              return sel ? <div className="mb-4"><FullCycleCard d={sel as any} /></div> : null;
+            })()}
             {decisions.length===0 ? <div className="text-sm text-slate-400 py-8 text-center border border-dashed rounded-xl">Nothing yet — complete step 1 above</div> : (
               <div className="relative ml-4">
                 <div className="timeline-line" />
@@ -187,19 +194,23 @@ export default function OpsPage() {
                   {[...decisions].reverse().slice(0,10).map((d)=> {
                     const ch = d.action?.channel; const meta = ch ? CHANNEL_META[ch] : null; const Icon = meta?.Icon;
                     const isBlocked = d.verdict==="blocked";
+                    const isSel = d.id === (selectedId || [...decisions].slice(-1)[0]?.id);
                     return (
                     <div key={d.id} className="relative pl-8">
-                      <span className={`absolute left-[6px] top-3 w-2.5 h-2.5 rounded-full ${isBlocked?"bg-red-500":"bg-emerald-500"} ring-4 ring-white`} />
-                      <div className={`rounded-xl border p-3 ${isBlocked?"bg-red-50/50 border-red-200":"bg-white"}`}>
+                      <span className={`absolute left-[6px] top-3 w-2.5 h-2.5 rounded-full ring-4 ring-white ${isBlocked?"bg-slate-300":"bg-emerald-500"}`} />
+                      <button onClick={()=>setSelectedId(d.id)} className="w-full text-left">
+                      <div className={`rounded-xl border p-3 transition bg-white ${isSel?"ring-1 ring-[#0B5CFF] border-[#0B5CFF]/40":"border-slate-200"}`}>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`inline-flex items-center gap-1 rz-pill border ${isBlocked?"bg-red-600 text-white border-red-600":"bg-emerald-600 text-white border-emerald-600"}`}>{isBlocked?<X size={12} />:<Check size={12} />}{d.verdict}</span>
+                          <span className={`inline-flex items-center gap-1 rz-pill border ${isBlocked?"bg-slate-100 text-slate-500 border-slate-200":"bg-emerald-50 text-emerald-700 border-emerald-200"}`}>{isBlocked?<Ban size={12} className="text-slate-400" />:<Check size={12} className="text-emerald-600" />}{d.verdict}</span>
                           {d.action && <span className={`inline-flex items-center gap-1 rz-pill border ${meta?.color || "bg-slate-50"}`}>{Icon && <Icon size={12} />}{AGENT_META[d.action.agent_type]?.label || d.action.agent_type}</span>}
                           <span className="rz-pill bg-slate-900 text-white text-[11px]">{d.source}</span>
-                          <span className="ml-auto text-[11px] text-slate-400">{new Date(d.created_at).toLocaleTimeString()} • {d.customer_id.slice(0,12)}</span>
+                          <span className="ml-auto text-[11px] text-slate-400" title={formatISTDateTime(d.created_at)}>{formatISTTime(d.created_at)} IST • {d.customer_id.slice(0,12)}</span>
                         </div>
                         <div className="text-sm mt-2 font-medium leading-relaxed text-slate-800">{d.reasoning}</div>
-                        {d.block_reason && <div className="text-xs text-red-600 mt-1.5 flex gap-1"><X size={12} className="mt-0.5 shrink-0" />{d.block_reason}</div>}
+                        {d.block_reason && <div className="text-xs text-slate-500 mt-1.5 pl-2 border-l-2 border-slate-200 leading-relaxed">{d.block_reason}</div>}
+                        {(d.dispatcher?.candidates?.length || d.trigger_event) && <div className="text-[11px] text-slate-500 mt-1.5 rz-mono">{d.trigger_event || "event"} • {(d.dispatcher?.candidates?.length || 0)} scored • winner {d.dispatcher?.winner || d.dispatcher_winner || d.action?.agent_type || "—"}</div>}
                       </div>
+                      </button>
                     </div>
                   )})}
                 </div>
@@ -224,19 +235,7 @@ export default function OpsPage() {
                 </div>
               )}) : <div className="text-xs text-slate-400">Loading agents…</div>}
             </div>
-            {dispatcher && (
-              <div className="mt-4 border rounded-xl p-3 bg-blue-50/50 border-blue-200">
-                <div className="text-xs font-semibold text-blue-900 flex items-center gap-2"><Zap size={12} /> Latest scoring — winner <span className="rz-pill bg-slate-900 text-white">{dispatcher.winner}</span> <span className="ml-auto text-[11px] font-normal text-blue-700">{dispatcher.candidates?.length} candidates scored</span></div>
-                <div className="grid grid-cols-2 gap-2 mt-3">
-                  {dispatcher.candidates?.map((c:any)=>(
-                    <div key={c.agent_type} className={`rounded-lg p-2.5 border text-xs ${c.agent_type===dispatcher.winner?"bg-white border-blue-300 shadow-sm":"bg-white/60 border-blue-100"}`}>
-                      <div className="font-medium flex items-center gap-1">{c.agent_type} <span className={`ml-auto rz-pill ${c.agent_type===dispatcher.winner?"bg-emerald-600 text-white":"bg-slate-100 text-slate-600"}`}>{safeFixed(c.score,1)}</span></div>
-                      <div className="text-[11px] text-slate-500 mt-1">{c.channel} {c.score_breakdown? `est ${safeFixed(c.score_breakdown.est_revenue,0)} • churn ${safeFixed(c.score_breakdown.churn_risk,0)}`:""}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">Scores persist on every decision — select any verdict above to replay its race, winner, guardrail veto, and customer message.</p>
           </div>
 
         </div>

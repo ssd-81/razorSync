@@ -6,14 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.utils.time import utc_iso
 from app.schemas import OrderCreateRequest
 from app.config import settings
 from app.services.razorpay_client import razorpay_client
 from app.models.order import Order
 from app.models.customer import CustomerContext
-from app.models.action import AgentAction
-from app.models.decision import CoordinationDecision
-from app.engine.coordinator import CoordinationEngine
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
@@ -73,62 +71,15 @@ def create_order(payload: OrderCreateRequest, db: Session = Depends(get_db)):
         failure_reason=failure_reason,
     )
     db.add(order)
-
-    # v3: Auto-create AgentAction + run coordination for this order
-    # Maps order creation to eligible native agents (autopay_retry for payment failed, etc.)
     try:
-        from datetime import datetime, timezone
-        from app.simulation.agents import AGENT_DEFS
-
-        now = order.created_at or datetime.now(timezone.utc)
-        # For order creation, use autopay_retry as the primary agent (payment link retry)
-        agent_type = "autopay_retry"
-        ade = AGENT_DEFS.get(agent_type, {})
-        primary_channel = ade.get("channels", ["sms"])[0]
-
-        action = AgentAction(
-            id=f"act_{uuid.uuid4().hex[:12]}",
-            agent_id=f"{agent_type}_order_{uuid.uuid4().hex[:6]}",
-            agent_type=agent_type,
-            customer_id=payload.customer_id,
-            merchant_id=settings.MERCHANT_ID,
-            action_type="order_created",
-            channel=primary_channel,
-            priority=5,
-            message_template=f"Order {order_id} created for ₹{payload.amount/100:.2f}",
-            discount_offered=0.0,
-            amount_involved=payload.amount / 100.0,
-            proposed_at=now,
-            proposed_delay_seconds=0,
-            confidence=0.7,
-            reasoning=f"Razorpay order {order_id} — {'fallback' if fallback else 'live'}",
-        )
-        db.add(action)
-        db.flush()
-
-        engine = CoordinationEngine(db)
-        decision = engine.process_action(action)
-        try:
-            decision.source = "fallback" if fallback else "live"
-            db.add(decision)
-            db.commit()
-            db.refresh(decision)
-        except Exception as e:
-            db.rollback()
-            logger.warning("Failed to set source on decision %s: %s", getattr(decision, 'id', '?'), e)
-            decision.source = "fallback" if fallback else "live"
-        decision_payload = {
-            "id": decision.id,
-            "verdict": decision.verdict,
-            "block_reason": decision.block_reason,
-            "reasoning": decision.reasoning,
-            "source": decision.source,
-        }
-    except Exception as e:
-        logger.exception("Coordination after order creation failed: %s", e)
+        db.commit()
+    except Exception:
         db.rollback()
-        decision_payload = None
+        raise
 
+    # Orders create no decision. Coordination runs only on real Razorpay
+    # webhooks (payment.captured / payment.failed / order.paid) via
+    # run_full_cycle in the reasoning worker.
     latency_ms = int((time.time() - start) * 1000)
     return {
         "order": {
@@ -141,9 +92,11 @@ def create_order(payload: OrderCreateRequest, db: Session = Depends(get_db)):
             "failure_reason": failure_reason,
             "razorpay_response": razorpay_order,
         },
-        "decision": decision_payload,
+        "decision": None,
+        "dispatcher": None,
+        "note": "Order created — coordination runs on webhook (payment.captured / payment.failed / order.paid).",
         "latency_ms": latency_ms,
-        "banner": "⚠️ RazorPay unavailable — using cached coordination decision" if fallback else None,
+        "banner": "⚠️ RazorPay unavailable — order recorded locally" if fallback else None,
     }
 
 
@@ -161,7 +114,7 @@ def list_orders(customer_id: str = None, db: Session = Depends(get_db)):
             "currency": o.currency,
             "status": o.status,
             "failure_reason": o.failure_reason,
-            "created_at": o.created_at.isoformat() if o.created_at else None,
+            "created_at": utc_iso(o.created_at),
         }
         for o in orders
     ]

@@ -15,6 +15,7 @@ from app.models.decision import CoordinationDecision
 from app.models.action import AgentAction
 from app.models.audit import AuditEntry
 from app.models.hitl import SuspendedAction, HITLTicket
+from app.utils.time import utc_iso
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/execution", tags=["execution"])
@@ -77,41 +78,50 @@ def get_execution_chain(
             "label": "Webhook / Order",
             "status": "completed",
             "detail": f"Event for customer {dec.customer_id}",
-            "timestamp": dec.created_at.isoformat() if dec.created_at else None,
+            "timestamp": utc_iso(dec.created_at),
         })
 
-        # Node 2: Dispatcher candidates (from action reasoning)
-        if action and action.reasoning and "Dispatcher" in (action.reasoning or ""):
-            nodes.append({
-                "type": "dispatcher",
-                "label": "Dispatcher",
-                "status": "completed",
-                "detail": action.reasoning,
-                "agent_type": action.agent_type,
-                "channel": action.channel,
-            })
-        else:
-            nodes.append({
-                "type": "dispatcher",
-                "label": "Dispatcher",
-                "status": "completed",
-                "detail": f"Agent: {action.agent_type if action else 'unknown'}",
-                "agent_type": action.agent_type if action else None,
-            })
-
-        # Node 3: Policy score
+        # v4: persisted dispatcher trace — real candidates, not string parsing.
+        try:
+            candidates = json.loads(getattr(dec, "dispatcher_candidates", None) or "[]")
+        except Exception:
+            candidates = []
+        trigger_event = getattr(dec, "trigger_event", None) or (audit.webhook_event if audit and audit.webhook_event else "order/live")
+        winner_type = getattr(dec, "dispatcher_winner", None) or (action.agent_type if action else None)
+        # score lookup for winner (persisted breakdown) else parse legacy reasoning
         score = None
-        if action and action.reasoning and "score=" in action.reasoning:
-            import re
-            score_match = re.search(r"score=([\d.]+)", action.reasoning)
-            if score_match:
-                score = float(score_match.group(1))
+        for _c in candidates:
+            if _c.get("agent_type") == winner_type:
+                score = _c.get("score")
+                break
+        if score is None and action and action.reasoning and "score=" in action.reasoning:
+            import re as _re
+            _m = _re.search(r"score=([\d.\-]+)", action.reasoning)
+            if _m:
+                try:
+                    score = float(_m.group(1))
+                except Exception:
+                    score = None
+        nodes.append({
+            "type": "dispatcher",
+            "label": f"Dispatcher — {trigger_event}",
+            "status": "completed",
+            "detail": f"{len(candidates)} candidate(s) scored; winner {winner_type}" if candidates else (action.reasoning if action and action.reasoning else f"Agent: {winner_type}"),
+            "agent_type": winner_type,
+            "channel": action.channel if action else None,
+            "candidates": candidates,
+            "winner": winner_type,
+        })
+
+        # Node 3: Policy score (winner + full candidate list for UI table)
         nodes.append({
             "type": "policy",
             "label": "Policy",
             "status": "completed",
-            "detail": f"Score: {score:.4f}" if score else "Score: N/A",
+            "detail": f"Winner {winner_type} score: {score:.4f}" if isinstance(score, (int, float)) else f"Winner {winner_type}",
             "score": score,
+            "candidates": candidates,
+            "winner": winner_type,
         })
 
         # Node 4: Guardrail check
@@ -154,13 +164,23 @@ def get_execution_chain(
             "source": dec.source,
         })
 
+        try:
+            _cands_out = json.loads(getattr(dec, "dispatcher_candidates", None) or "[]")
+        except Exception:
+            _cands_out = []
         chains.append({
             "decision_id": dec.id,
             "customer_id": dec.customer_id,
             "agent_type": action.agent_type if action else None,
             "channel": action.channel if action else None,
             "source": dec.source,
-            "created_at": dec.created_at.isoformat() if dec.created_at else None,
+            "trigger_event": getattr(dec, "trigger_event", None) or (audit.webhook_event if audit and audit.webhook_event else None),
+            "dispatcher_winner": getattr(dec, "dispatcher_winner", None),
+            "dispatcher_candidates": _cands_out,
+            "message_preview": action.message_template if action else None,
+            "verdict": dec.verdict,
+            "block_reason": dec.block_reason,
+            "created_at": utc_iso(dec.created_at),
             "nodes": nodes,
         })
 
@@ -188,6 +208,6 @@ def get_execution_stream(db: Session = Depends(get_db)):
             "channel": action.channel if action else None,
             "reasoning": latest.reasoning,
             "source": latest.source,
-            "created_at": latest.created_at.isoformat() if latest.created_at else None,
+            "created_at": utc_iso(latest.created_at),
         }
     }
